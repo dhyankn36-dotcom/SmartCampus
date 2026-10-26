@@ -4,18 +4,18 @@ import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
 
+const STATUSES = [
+  "Submitted",
+  "In Progress",
+  "Resolved",
+  "Rejected",
+];
+
 const emptyForm = {
   title: "",
   category: "Infrastructure",
   location: "",
   description: "",
-};
-
-const categoryDepartments = {
-  Infrastructure: "Maintenance Department",
-  "Wi-Fi": "IT Department",
-  Cleanliness: "Housekeeping Department",
-  Transport: "Transport Department",
 };
 
 function formatDate(value) {
@@ -40,6 +40,7 @@ function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [updatingId, setUpdatingId] = useState(null);
 
   const loadComplaints = useCallback(async () => {
     setLoading(true);
@@ -54,7 +55,7 @@ function App() {
 
       const data = await response.json();
       setComplaints(data);
-    } catch (err) {
+    } catch {
       setError(
         "Unable to connect to SmartCampus. Check that the FastAPI server is running."
       );
@@ -79,9 +80,6 @@ function App() {
     setSubmitting(true);
 
     try {
-      // The current backend accepts title, description and category.
-      // Include the location in the description until the backend
-      // and database have a dedicated location column.
       const description = form.location.trim()
         ? `Location: ${form.location.trim()}\n\n${form.description.trim()}`
         : form.description.trim();
@@ -112,7 +110,6 @@ function App() {
       setShowForm(false);
       setNotice(`Complaint ${result.ticket_id} submitted successfully!`);
 
-      // Fetch the authoritative list from the database-backed API.
       await loadComplaints();
     } catch (err) {
       setError(
@@ -121,6 +118,49 @@ function App() {
       );
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Update complaint status using the FastAPI PATCH endpoint.
+  const updateComplaintStatus = async (complaintId, newStatus) => {
+    setNotice("");
+    setError("");
+    setUpdatingId(complaintId);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/complaints/${complaintId}/status`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status: newStatus }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof result.detail === "string"
+            ? result.detail
+            : "Could not update the complaint status."
+        );
+      }
+
+      setNotice(
+        `${result.ticket_id}: status changed to ${result.status}.`
+      );
+
+      await loadComplaints();
+    } catch (err) {
+      setError(
+        err.message ||
+          "Could not update the status. Check your backend connection."
+      );
+    } finally {
+      setUpdatingId(null);
     }
   };
 
@@ -184,7 +224,11 @@ function App() {
         <button
           className="nav-item"
           type="button"
-          onClick={() => setShowForm(true)}
+          onClick={() => {
+            setNotice("");
+            setError("");
+            setShowForm(true);
+          }}
         >
           <span>＋</span> Submit Complaint
         </button>
@@ -205,7 +249,9 @@ function App() {
           <div className="help-card">
             <div className="help-icon">?</div>
             <strong>Need help?</strong>
-            <p>Report an issue and we'll route it to the right department.</p>
+            <p>
+              Report an issue and we'll route it to the right department.
+            </p>
             <button
               type="button"
               onClick={() => setShowForm(true)}
@@ -287,8 +333,12 @@ function App() {
                   {stat.icon}
                 </div>
                 <div className="stat-label">{stat.label}</div>
-                <div className="stat-value">{loading ? "—" : stat.value}</div>
-                <div className="stat-footnote">Based on saved tickets</div>
+                <div className="stat-value">
+                  {loading ? "—" : stat.value}
+                </div>
+                <div className="stat-footnote">
+                  Based on saved tickets
+                </div>
               </div>
             ))}
           </div>
@@ -441,19 +491,20 @@ function App() {
                     <th>Category / Department</th>
                     <th>Date</th>
                     <th>Status</th>
+                    <th>Update Status</th>
                   </tr>
                 </thead>
 
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan="5" className="empty-state">
+                      <td colSpan="6" className="empty-state">
                         Loading complaints from the database...
                       </td>
                     </tr>
                   ) : visibleComplaints.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="empty-state">
+                      <td colSpan="6" className="empty-state">
                         No matching complaints found.
                       </td>
                     </tr>
@@ -492,6 +543,32 @@ function App() {
                             {complaint.status}
                           </span>
                         </td>
+
+                        <td>
+                          <select
+                            aria-label={`Update status for ${complaint.ticket_id}`}
+                            value={complaint.status}
+                            disabled={updatingId === complaint.id}
+                            onChange={(event) =>
+                              updateComplaintStatus(
+                                complaint.id,
+                                event.target.value
+                              )
+                            }
+                          >
+                            {STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+
+                          {updatingId === complaint.id && (
+                            <span className="cell-subtitle">
+                              Saving...
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -502,11 +579,12 @@ function App() {
             <div className="table-footer">
               Showing {loading ? "—" : visibleComplaints.length} of{" "}
               {loading ? "—" : complaints.length} complaints
+
               <button
                 className="secondary-button"
                 type="button"
                 onClick={loadComplaints}
-                disabled={loading}
+                disabled={loading || updatingId !== null}
               >
                 Refresh
               </button>
