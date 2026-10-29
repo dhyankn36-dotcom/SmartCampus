@@ -1,27 +1,28 @@
-# Secrets and environment variables
+# Secrets
 .env
-.env.*
-!.env.example
 backend/.env
 
 # Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
 backend/.venv/
+.venv/
+__pycache__/
+*.pyc
 
-# React / Node.js
-node_modules/
+# React
 frontend/node_modules/
-dist/
 frontend/dist/
+node_modules/
+dist/
 
-# Uploaded complaint images and user data
-backend/uploads/
-uploads/
-
-# Editor and operating system
+# Editor and OS
 .vscode/
 .DS_Store
-Thumbs.db
+
+# Private complaint uploads
+/backend/uploads/
+
+# Local database backups
+*.sql
+
+# Duplicate frontend backup
+/frontend/src/App copy.jsx
