@@ -19,11 +19,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, engine, get_db
-from models import Complaint, User
+from models import Complaint, User, StatusHistory
 from schemas import (
     ComplaintCreate,
     ComplaintResponse,
     ComplaintStatusUpdate,
+    StatusHistoryResponse,
     UserRegister,
     UserLogin,
     UserResponse,
@@ -54,7 +55,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="SmartCampus Complaint Management System",
     description="API for campus complaints, grievances and student feedback",
-    version="3.0.0",
+    version="4.0.0",
 )
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
@@ -320,6 +321,15 @@ def create_complaint(
             f"CMP-{datetime.now().year}-{complaint.id:03d}"
         )
 
+        initial_history = StatusHistory(
+            complaint_id=complaint.id,
+            old_status=None,
+            new_status="Submitted",
+            changed_by_user_id=current_user.id,
+        )
+
+        db.add(initial_history)
+
         db.commit()
         db.refresh(complaint)
 
@@ -392,6 +402,7 @@ def get_complaint(
 # --------------------------------------------------
 # UPDATE COMPLAINT STATUS
 # Only admins can update status.
+# Every actual change is recorded in status history.
 # --------------------------------------------------
 
 @app.patch("/api/complaints/{complaint_id}/status")
@@ -420,9 +431,26 @@ def update_complaint_status(
             detail="Complaint not found.",
         )
 
-    complaint.status = update_data.status
+    old_status = complaint.status
+
+    if old_status == update_data.status:
+        return {
+            "message": "Complaint already has this status.",
+            "ticket_id": complaint.ticket_id,
+            "status": complaint.status,
+        }
 
     try:
+        complaint.status = update_data.status
+
+        history_entry = StatusHistory(
+            complaint_id=complaint.id,
+            old_status=old_status,
+            new_status=update_data.status,
+            changed_by_user_id=current_user.id,
+        )
+
+        db.add(history_entry)
         db.commit()
         db.refresh(complaint)
 
@@ -436,8 +464,67 @@ def update_complaint_status(
     return {
         "message": "Complaint status updated successfully.",
         "ticket_id": complaint.ticket_id,
+        "old_status": old_status,
         "status": complaint.status,
     }
+
+
+# --------------------------------------------------
+# VIEW COMPLAINT STATUS HISTORY
+# Complaint owner or administrator only.
+# --------------------------------------------------
+
+@app.get(
+    "/api/complaints/{complaint_id}/history",
+    response_model=list[StatusHistoryResponse],
+)
+def get_complaint_history(
+    complaint_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.query(Complaint).filter(
+        Complaint.id == complaint_id
+    ).first()
+
+    if complaint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    if (
+        current_user.role != "admin"
+        and complaint.user_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view the history of your own complaints.",
+        )
+
+    history_entries = (
+        db.query(StatusHistory)
+        .filter(StatusHistory.complaint_id == complaint_id)
+        .order_by(StatusHistory.changed_at.asc(), StatusHistory.id.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id": entry.id,
+            "complaint_id": entry.complaint_id,
+            "old_status": entry.old_status,
+            "new_status": entry.new_status,
+            "changed_by_user_id": entry.changed_by_user_id,
+            "changed_by_name": (
+                entry.changed_by.name
+                if entry.changed_by
+                else "System"
+            ),
+            "changed_at": entry.changed_at,
+        }
+        for entry in history_entries
+    ]
 
 
 # --------------------------------------------------

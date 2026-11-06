@@ -40,6 +40,26 @@ function formatDate(value) {
       });
 }
 
+function formatDateTime(value) {
+  if (!value) return "Date unavailable";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function statusClass(status) {
+  return (status || "submitted").toLowerCase().replaceAll(" ", "-");
+}
+
 function hasFeedback(complaint) {
   return (
     complaint.feedback_submitted_at != null ||
@@ -82,6 +102,12 @@ function App() {
   const [adminFeedbackLoading, setAdminFeedbackLoading] = useState(false);
   const [adminFeedbackError, setAdminFeedbackError] = useState("");
 
+  // Complaint activity timeline state
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+  const [complaintHistories, setComplaintHistories] = useState({});
+  const [historyLoadingId, setHistoryLoadingId] = useState(null);
+  const [historyErrors, setHistoryErrors] = useState({});
+
   const isAdmin = user?.role === "admin";
 
   const logout = useCallback((message = "") => {
@@ -91,6 +117,9 @@ function App() {
     setComplaints([]);
     setAdminFeedback([]);
     setFeedbackAnalytics(null);
+    setComplaintHistories({});
+    setExpandedHistoryId(null);
+    setHistoryErrors({});
     setNotice(message);
     setError("");
     setShowForm(false);
@@ -115,6 +144,7 @@ function App() {
       const response = await fetch(`${API_URL}/api/complaints`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
       const data = await readResponse(response);
       setComplaints(data);
     } catch (err) {
@@ -130,6 +160,60 @@ function App() {
       setLoading(false);
     }
   }, [token, logout]);
+
+  // Fetch the history for one complaint when its timeline is opened.
+  const loadComplaintHistory = useCallback(
+    async (complaintId, forceRefresh = false) => {
+      if (!token) return;
+
+      if (!forceRefresh && complaintHistories[complaintId]) {
+        return;
+      }
+
+      setHistoryLoadingId(complaintId);
+      setHistoryErrors((previous) => ({
+        ...previous,
+        [complaintId]: "",
+      }));
+
+      try {
+        const response = await fetch(
+          `${API_URL}/api/complaints/${complaintId}/history`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const data = await readResponse(response);
+
+        setComplaintHistories((previous) => ({
+          ...previous,
+          [complaintId]: Array.isArray(data) ? data : [],
+        }));
+      } catch (err) {
+        setHistoryErrors((previous) => ({
+          ...previous,
+          [complaintId]:
+            err.message || "Unable to load complaint activity.",
+        }));
+      } finally {
+        setHistoryLoadingId(null);
+      }
+    },
+    [token, complaintHistories]
+  );
+
+  const toggleComplaintHistory = async (complaintId) => {
+    if (expandedHistoryId === complaintId) {
+      setExpandedHistoryId(null);
+      return;
+    }
+
+    setExpandedHistoryId(complaintId);
+    await loadComplaintHistory(complaintId);
+  };
 
   const loadAdminFeedback = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -178,6 +262,7 @@ function App() {
         const response = await fetch(`${API_URL}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
+
         const currentUser = await readResponse(response);
 
         if (!cancelled) setUser(currentUser);
@@ -244,6 +329,7 @@ function App() {
       setUser(result.user);
       setToken(result.access_token);
       setAuthForm({ name: "", email: "", password: "" });
+
       setNotice(
         authMode === "register"
           ? "Account created successfully. Welcome to SmartCampus!"
@@ -298,6 +384,7 @@ function App() {
               body: imageBody,
             })
           );
+
           successMessage += " Image uploaded successfully.";
         } catch (imageError) {
           successMessage += ` Complaint saved, but image upload failed: ${imageError.message}`;
@@ -331,7 +418,19 @@ function App() {
       );
 
       setNotice(`${result.ticket_id}: status changed to ${result.status}.`);
+
+      // Refresh complaint list and its activity timeline.
+      setComplaintHistories((previous) => {
+        const updated = { ...previous };
+        delete updated[complaintId];
+        return updated;
+      });
+
       await loadComplaints();
+
+      if (expandedHistoryId === complaintId) {
+        await loadComplaintHistory(complaintId, true);
+      }
     } catch (err) {
       setError(err.message || "Could not update the complaint status.");
     } finally {
@@ -372,10 +471,12 @@ function App() {
       );
 
       setNotice(`Thank you! Feedback submitted for ${complaint.ticket_id}.`);
+
       setFeedbackText((previous) => ({
         ...previous,
         [complaint.id]: "",
       }));
+
       await loadComplaints();
     } catch (err) {
       setError(err.message || "Could not submit feedback.");
@@ -426,9 +527,8 @@ function App() {
 
   const analyticsTotal =
     feedbackAnalytics?.total_feedback ?? adminFeedback.length;
-  const analyticsAverage = Number(
-    feedbackAnalytics?.average_rating ?? 0
-  );
+
+  const analyticsAverage = Number(feedbackAnalytics?.average_rating ?? 0);
 
   const ratingDistribution =
     feedbackAnalytics?.rating_distribution || {};
@@ -452,6 +552,7 @@ function App() {
               Report campus issues, track your tickets, and stay informed
               about their progress in one place.
             </p>
+
             <div className="auth-feature">
               <span>✓</span>
               <div>
@@ -459,6 +560,7 @@ function App() {
                 <p>Submit concerns with clear details.</p>
               </div>
             </div>
+
             <div className="auth-feature">
               <span>↗</span>
               <div>
@@ -483,11 +585,13 @@ function App() {
             <p className="eyebrow">
               {authMode === "login" ? "WELCOME BACK" : "GET STARTED"}
             </p>
+
             <h2>
               {authMode === "login"
                 ? "Sign in to your account"
                 : "Create your account"}
             </h2>
+
             <p className="auth-subtitle">
               {authMode === "login"
                 ? "Enter your details to access your campus dashboard."
@@ -499,6 +603,7 @@ function App() {
                 {notice}
               </div>
             )}
+
             {error && (
               <div className="auth-error" role="alert">
                 {error}
@@ -573,6 +678,7 @@ function App() {
               {authMode === "login"
                 ? "New to SmartCampus?"
                 : "Already have an account?"}
+
               <button
                 type="button"
                 onClick={() => {
@@ -606,6 +712,7 @@ function App() {
         </div>
 
         <p className="nav-label">WORKSPACE</p>
+
         <button className="nav-item active" type="button">
           <span>▦</span> Dashboard
         </button>
@@ -618,6 +725,7 @@ function App() {
               setNotice("");
               setError("");
               setShowForm(true);
+
               document
                 .getElementById("new-complaint")
                 ?.scrollIntoView({ behavior: "smooth" });
@@ -662,11 +770,9 @@ function App() {
                 ? "Review campus complaints and monitor student feedback."
                 : "Report an issue and we'll route it to the right department."}
             </p>
+
             {!isAdmin && (
-              <button
-                type="button"
-                onClick={() => setShowForm(true)}
-              >
+              <button type="button" onClick={() => setShowForm(true)}>
                 Report an issue →
               </button>
             )}
@@ -689,10 +795,12 @@ function App() {
           <div className="breadcrumb">
             Workspace <span>/</span> Dashboard
           </div>
+
           <div className="topbar-right">
             <span className="live-dot"></span>
             <span className="system-status">Campus services portal</span>
             <span className="topbar-user">{user.name}</span>
+
             <button
               className="secondary-button logout-button"
               type="button"
@@ -709,10 +817,12 @@ function App() {
               <p className="eyebrow">
                 {isAdmin ? "ADMINISTRATION CENTER" : "CAMPUS SUPPORT CENTER"}
               </p>
+
               <h1>
                 Welcome, {user.name.split(" ")[0]}!{" "}
                 <span className="wave">✳</span>
               </h1>
+
               <p className="subtitle">
                 {isAdmin
                   ? "Monitor complaints, manage resolutions, and review student feedback."
@@ -778,6 +888,7 @@ function App() {
                   </p>
                 </div>
               </div>
+
               <button
                 className="secondary-button"
                 type="button"
@@ -798,6 +909,7 @@ function App() {
                     Provide accurate details so the right team can help.
                   </p>
                 </div>
+
                 <button
                   className="close-button"
                   type="button"
@@ -886,9 +998,11 @@ function App() {
                     }}
                     disabled={submitting}
                   />
+
                   <span className="cell-subtitle">
                     JPG, PNG, or WEBP · Maximum 5 MB
                   </span>
+
                   {selectedImage && (
                     <span className="cell-subtitle">
                       Selected: {selectedImage.name}
@@ -908,6 +1022,7 @@ function App() {
                   >
                     Cancel
                   </button>
+
                   <button
                     className="primary-button"
                     type="submit"
@@ -971,97 +1086,103 @@ function App() {
                     </tr>
                   ) : (
                     visibleComplaints.map((complaint) => (
-                      <tr key={complaint.id}>
-                        <td>
-                          <span className="ticket-id">
-                            {complaint.ticket_id}
-                          </span>
-                        </td>
-
-                        <td>
-                          <strong>{complaint.title}</strong>
-                          <span className="cell-subtitle">
-                            {complaint.description}
-                          </span>
-
-                          {complaint.image_url && (
-                            <a
-                              href={`${API_URL}${complaint.image_url}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="cell-subtitle"
-                            >
-                              View attached image
-                            </a>
-                          )}
-                        </td>
-
-                        <td>
-                          <strong>{complaint.category}</strong>
-                          <span className="cell-subtitle">
-                            {complaint.department}
-                          </span>
-                        </td>
-
-                        <td>{formatDate(complaint.submitted_at)}</td>
-
-                        <td>
-                          <span
-                            className={`status ${complaint.status
-                              .toLowerCase()
-                              .replaceAll(" ", "-")}`}
-                          >
-                            <span className="status-dot"></span>
-                            {complaint.status}
-                          </span>
-                        </td>
-
-                        {isAdmin && (
+                      <>
+                        <tr key={complaint.id}>
                           <td>
-                            <select
-                              aria-label={`Update status for ${complaint.ticket_id}`}
-                              value={complaint.status}
-                              disabled={updatingId === complaint.id}
-                              onChange={(event) =>
-                                updateComplaintStatus(
-                                  complaint.id,
-                                  event.target.value
-                                )
+                            <span className="ticket-id">
+                              {complaint.ticket_id}
+                            </span>
+                          </td>
+
+                          <td>
+                            <strong>{complaint.title}</strong>
+                            <span className="cell-subtitle">
+                              {complaint.description}
+                            </span>
+
+                            {complaint.image_url && (
+                              <a
+                                href={`${API_URL}${complaint.image_url}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="cell-subtitle"
+                              >
+                                View attached image
+                              </a>
+                            )}
+
+                            <button
+                              type="button"
+                              className="history-toggle"
+                              onClick={() =>
+                                toggleComplaintHistory(complaint.id)
+                              }
+                              aria-expanded={
+                                expandedHistoryId === complaint.id
                               }
                             >
-                              {STATUSES.map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
-                            </select>
-
-                            {updatingId === complaint.id && (
-                              <span className="cell-subtitle">Saving...</span>
-                            )}
+                              {expandedHistoryId === complaint.id
+                                ? "Hide activity ↑"
+                                : "View activity history →"}
+                            </button>
                           </td>
-                        )}
 
-                        {!isAdmin && (
-                          <td className="feedback-table-cell">
-                            {complaint.status !== "Resolved" ? (
-                              <span className="feedback-pending">
-                                Available after resolution
-                              </span>
-                            ) : hasFeedback(complaint) ? (
-                              <div className="feedback-submitted">
-                                <span className="feedback-stars">
-                                  {"★".repeat(
-                                    Math.max(
-                                      0,
-                                      Math.min(
-                                        5,
-                                        Number(complaint.feedback_rating) || 0
-                                      )
-                                    )
-                                  )}
-                                  {"☆".repeat(
-                                    5 -
+                          <td>
+                            <strong>{complaint.category}</strong>
+                            <span className="cell-subtitle">
+                              {complaint.department}
+                            </span>
+                          </td>
+
+                          <td>{formatDate(complaint.submitted_at)}</td>
+
+                          <td>
+                            <span
+                              className={`status ${statusClass(complaint.status)}`}
+                            >
+                              <span className="status-dot"></span>
+                              {complaint.status}
+                            </span>
+                          </td>
+
+                          {isAdmin && (
+                            <td>
+                              <select
+                                aria-label={`Update status for ${complaint.ticket_id}`}
+                                value={complaint.status}
+                                disabled={updatingId === complaint.id}
+                                onChange={(event) =>
+                                  updateComplaintStatus(
+                                    complaint.id,
+                                    event.target.value
+                                  )
+                                }
+                              >
+                                {STATUSES.map((status) => (
+                                  <option key={status} value={status}>
+                                    {status}
+                                  </option>
+                                ))}
+                              </select>
+
+                              {updatingId === complaint.id && (
+                                <span className="cell-subtitle">
+                                  Saving...
+                                </span>
+                              )}
+                            </td>
+                          )}
+
+                          {!isAdmin && (
+                            <td className="feedback-table-cell">
+                              {complaint.status !== "Resolved" ? (
+                                <span className="feedback-pending">
+                                  Available after resolution
+                                </span>
+                              ) : hasFeedback(complaint) ? (
+                                <div className="feedback-submitted">
+                                  <span className="feedback-stars">
+                                    {"★".repeat(
                                       Math.max(
                                         0,
                                         Math.min(
@@ -1069,31 +1190,181 @@ function App() {
                                           Number(complaint.feedback_rating) || 0
                                         )
                                       )
-                                  )}
-                                </span>
-                                <span>Submitted</span>
+                                    )}
+                                    {"☆".repeat(
+                                      5 -
+                                        Math.max(
+                                          0,
+                                          Math.min(
+                                            5,
+                                            Number(complaint.feedback_rating) || 0
+                                          )
+                                        )
+                                    )}
+                                  </span>
+                                  <span>Submitted</span>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="feedback-open-button"
+                                  onClick={() => {
+                                    document
+                                      .getElementById(
+                                        `feedback-${complaint.id}`
+                                      )
+                                      ?.scrollIntoView({
+                                        behavior: "smooth",
+                                        block: "center",
+                                      });
+                                  }}
+                                >
+                                  Give feedback ↓
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+
+                        {expandedHistoryId === complaint.id && (
+                          <tr
+                            className="history-expanded-row"
+                            key={`history-${complaint.id}`}
+                          >
+                            <td colSpan={isAdmin ? 6 : 6}>
+                              <div className="history-container">
+                                <div className="history-header">
+                                  <div>
+                                    <p className="eyebrow">
+                                      COMPLAINT ACTIVITY
+                                    </p>
+                                    <h3>
+                                      Status timeline · {complaint.ticket_id}
+                                    </h3>
+                                    <p className="subtitle">
+                                      Track every recorded status update.
+                                    </p>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className="history-refresh"
+                                    disabled={
+                                      historyLoadingId === complaint.id
+                                    }
+                                    onClick={() =>
+                                      loadComplaintHistory(
+                                        complaint.id,
+                                        true
+                                      )
+                                    }
+                                  >
+                                    {historyLoadingId === complaint.id
+                                      ? "Loading..."
+                                      : "Refresh history ↻"}
+                                  </button>
+                                </div>
+
+                                {historyLoadingId === complaint.id ? (
+                                  <div className="history-message">
+                                    Loading activity history...
+                                  </div>
+                                ) : historyErrors[complaint.id] ? (
+                                  <div className="history-error">
+                                    {historyErrors[complaint.id]}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        loadComplaintHistory(
+                                          complaint.id,
+                                          true
+                                        )
+                                      }
+                                    >
+                                      Try again
+                                    </button>
+                                  </div>
+                                ) : !complaintHistories[complaint.id] ||
+                                  complaintHistories[complaint.id].length ===
+                                    0 ? (
+                                  <div className="history-message">
+                                    No activity history is available for this
+                                    complaint yet.
+                                  </div>
+                                ) : (
+                                  <div className="activity-timeline">
+                                    {complaintHistories[complaint.id].map(
+                                      (entry, index) => (
+                                        <div
+                                          className="timeline-entry"
+                                          key={entry.id}
+                                        >
+                                          <div className="timeline-marker">
+                                            <span
+                                              className={`timeline-dot ${statusClass(entry.new_status)}`}
+                                            ></span>
+                                            {index !==
+                                              complaintHistories[
+                                                complaint.id
+                                              ].length -
+                                                1 && (
+                                              <span className="timeline-line"></span>
+                                            )}
+                                          </div>
+
+                                          <div className="timeline-content">
+                                            <div className="timeline-top">
+                                              <div>
+                                                <span
+                                                  className={`status ${statusClass(entry.new_status)}`}
+                                                >
+                                                  <span className="status-dot"></span>
+                                                  {entry.new_status}
+                                                </span>
+
+                                                {entry.old_status ? (
+                                                  <p className="timeline-transition">
+                                                    Changed from{" "}
+                                                    <strong>
+                                                      {entry.old_status}
+                                                    </strong>{" "}
+                                                    to{" "}
+                                                    <strong>
+                                                      {entry.new_status}
+                                                    </strong>
+                                                  </p>
+                                                ) : (
+                                                  <p className="timeline-transition">
+                                                    Complaint submitted
+                                                  </p>
+                                                )}
+                                              </div>
+
+                                              <span className="timeline-date">
+                                                {formatDateTime(
+                                                  entry.changed_at
+                                                )}
+                                              </span>
+                                            </div>
+
+                                            <p className="timeline-actor">
+                                              Updated by{" "}
+                                              <strong>
+                                                {entry.changed_by_name ||
+                                                  "System"}
+                                              </strong>
+                                            </p>
+                                          </div>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            ) : (
-                              <button
-                                type="button"
-                                className="feedback-open-button"
-                                onClick={() => {
-                                  document
-                                    .getElementById(
-                                      `feedback-${complaint.id}`
-                                    )
-                                    ?.scrollIntoView({
-                                      behavior: "smooth",
-                                      block: "center",
-                                    });
-                                }}
-                              >
-                                Give feedback ↓
-                              </button>
-                            )}
-                          </td>
+                            </td>
+                          </tr>
                         )}
-                      </tr>
+                      </>
                     ))
                   )}
                 </tbody>
@@ -1105,6 +1376,7 @@ function App() {
                 Showing {loading ? "—" : visibleComplaints.length} of{" "}
                 {loading ? "—" : complaints.length} complaints
               </span>
+
               <button
                 className="secondary-button"
                 type="button"
@@ -1166,6 +1438,7 @@ function App() {
                               Resolved · {complaint.department}
                             </p>
                           </div>
+
                           <span className="status resolved">
                             <span className="status-dot"></span>
                             Resolved
@@ -1202,6 +1475,7 @@ function App() {
                                 ★
                               </button>
                             ))}
+
                             <span className="rating-hint">
                               {feedbackRating[complaint.id]
                                 ? `${feedbackRating[complaint.id]} / 5`
@@ -1317,32 +1591,39 @@ function App() {
                 </div>
 
                 <div className="rating-bars">
-                  {RATINGS.slice().reverse().map((rating) => {
-                    const count =
-                      Number(
-                        ratingDistribution[rating] ??
-                          ratingDistribution[String(rating)] ??
-                          0
-                      ) || 0;
-                    const percentage = analyticsTotal
-                      ? Math.min(100, (count / analyticsTotal) * 100)
-                      : 0;
+                  {RATINGS.slice()
+                    .reverse()
+                    .map((rating) => {
+                      const count =
+                        Number(
+                          ratingDistribution[rating] ??
+                            ratingDistribution[String(rating)] ??
+                            0
+                        ) || 0;
 
-                    return (
-                      <div className="rating-bar-row" key={rating}>
-                        <span className="rating-bar-label">
-                          {rating} <span>★</span>
-                        </span>
-                        <div className="rating-bar-track">
-                          <div
-                            className="rating-bar-fill"
-                            style={{ width: `${percentage}%` }}
-                          />
+                      const percentage = analyticsTotal
+                        ? Math.min(100, (count / analyticsTotal) * 100)
+                        : 0;
+
+                      return (
+                        <div className="rating-bar-row" key={rating}>
+                          <span className="rating-bar-label">
+                            {rating} <span>★</span>
+                          </span>
+
+                          <div className="rating-bar-track">
+                            <div
+                              className="rating-bar-fill"
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+
+                          <strong>
+                            {adminFeedbackLoading ? "—" : count}
+                          </strong>
                         </div>
-                        <strong>{adminFeedbackLoading ? "—" : count}</strong>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               </div>
 
@@ -1354,6 +1635,7 @@ function App() {
                       Feedback received for resolved complaints.
                     </p>
                   </div>
+
                   <button
                     className="secondary-button"
                     type="button"
@@ -1388,19 +1670,24 @@ function App() {
                           <div className="admin-feedback-item-top">
                             <div>
                               <span className="ticket-id">
-                                {item.ticket_id || `Complaint #${item.complaint_id}`}
+                                {item.ticket_id ||
+                                  `Complaint #${item.complaint_id}`}
                               </span>
+
                               <h4>{item.title || "Campus complaint"}</h4>
+
                               <span className="cell-subtitle">
                                 {item.student_name || "Student"} ·{" "}
                                 {formatDate(item.feedback_submitted_at)}
                               </span>
                             </div>
+
                             <span className="feedback-stars">
                               {"★".repeat(rating)}
                               {"☆".repeat(5 - rating)}
                             </span>
                           </div>
+
                           <p className="admin-feedback-comment">
                             {item.feedback}
                           </p>

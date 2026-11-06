@@ -1,10 +1,21 @@
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    ForeignKey,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from database import Base
 
+
+# --------------------------------------------------
+# COMPLAINT MODEL
+# --------------------------------------------------
 
 class Complaint(Base):
     __tablename__ = "complaints"
@@ -38,7 +49,10 @@ class Complaint(Base):
 
     feedback = Column(Text, nullable=True)
     feedback_rating = Column(Integer, nullable=True)
-    feedback_submitted_at = Column(DateTime(timezone=True), nullable=True)
+    feedback_submitted_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
 
     image_url = Column(String(500), nullable=True)
 
@@ -54,6 +68,17 @@ class Complaint(Base):
         back_populates="complaints"
     )
 
+    status_history = relationship(
+        "StatusHistory",
+        back_populates="complaint",
+        cascade="all, delete-orphan",
+        order_by="StatusHistory.changed_at"
+    )
+
+
+# --------------------------------------------------
+# USER MODEL
+# --------------------------------------------------
 
 class User(Base):
     __tablename__ = "users"
@@ -87,4 +112,61 @@ class User(Base):
     complaints = relationship(
         "Complaint",
         back_populates="owner"
+    )
+
+    status_changes = relationship(
+        "StatusHistory",
+        back_populates="changed_by",
+        foreign_keys="StatusHistory.changed_by_user_id"
+    )
+
+
+# --------------------------------------------------
+# COMPLAINT STATUS HISTORY MODEL
+# --------------------------------------------------
+
+class StatusHistory(Base):
+    __tablename__ = "status_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    complaint_id = Column(
+        Integer,
+        ForeignKey("complaints.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    old_status = Column(
+        String(30),
+        nullable=True
+    )
+
+    new_status = Column(
+        String(30),
+        nullable=False
+    )
+
+    changed_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    changed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    complaint = relationship(
+        "Complaint",
+        back_populates="status_history"
+    )
+
+    changed_by = relationship(
+        "User",
+        back_populates="status_changes",
+        foreign_keys=[changed_by_user_id]
     )

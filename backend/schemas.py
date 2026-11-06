@@ -66,6 +66,20 @@ class ComplaintResponse(BaseModel):
 
 
 # --------------------------------------------------
+# STATUS HISTORY SCHEMAS
+# --------------------------------------------------
+
+class StatusHistoryResponse(BaseModel):
+    id: int
+    complaint_id: int
+    old_status: str | None = None
+    new_status: str
+    changed_by_user_id: int | None = None
+    changed_by_name: str
+    changed_at: datetime
+
+
+# --------------------------------------------------
 # FEEDBACK SCHEMAS
 # --------------------------------------------------
 
