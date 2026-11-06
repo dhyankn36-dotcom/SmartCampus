@@ -1,28 +1,31 @@
+
+# Environment variables and secrets
 .env
+.env.*
+
+# Python virtual environment
 .venv/
+venv/
+env/
+
+# Python cache files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
 # Private complaint uploads
-backend/uploads/
+uploads/
 
-# Local database backups
+# Database backups
 *.sql
+*.db
+*.sqlite3
 
-# Duplicate frontend files
-frontend/src/* copy.jsx
-# Private complaint uploads
-/backend/uploads/
+# Backup files
+models_backup.py
+*.bak
 
-# Local database backups
-*.sql
-
-# Duplicate frontend backup
-/frontend/src/App copy.jsx
-# Private complaint uploads
-/backend/uploads/
-
-# Local database backups
-*.sql
-
-# Duplicate frontend backup
-/frontend/src/App copy.jsx
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
