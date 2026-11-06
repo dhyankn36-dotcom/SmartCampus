@@ -36,13 +36,12 @@ class Complaint(Base):
         server_default=func.now()
     )
 
-    # Student feedback after complaint resolution
     feedback = Column(Text, nullable=True)
+    feedback_rating = Column(Integer, nullable=True)
+    feedback_submitted_at = Column(DateTime(timezone=True), nullable=True)
 
-    # Path or URL of the uploaded complaint image
     image_url = Column(String(500), nullable=True)
 
-    # Complaint owner
     user_id = Column(
         Integer,
         ForeignKey("users.id", name="fk_complaints_user"),

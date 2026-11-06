@@ -1,3 +1,4 @@
+
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -59,4 +60,31 @@ class ComplaintResponse(BaseModel):
     status: str
     submitted_at: datetime
     feedback: str | None = None
+    feedback_rating: int | None = None
+    feedback_submitted_at: datetime | None = None
     image_url: str | None = None
+
+
+# --------------------------------------------------
+# FEEDBACK SCHEMAS
+# --------------------------------------------------
+
+class FeedbackCreate(BaseModel):
+    feedback: str = Field(min_length=1, max_length=1000)
+    rating: int = Field(ge=1, le=5)
+
+
+class FeedbackResponse(BaseModel):
+    complaint_id: int
+    ticket_id: str
+    title: str
+    feedback: str
+    rating: int
+    feedback_submitted_at: datetime
+    student_name: str
+
+
+class FeedbackAnalytics(BaseModel):
+    total_feedback: int
+    average_rating: float
+    rating_distribution: dict[int, int]

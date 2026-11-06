@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,7 +28,11 @@ from schemas import (
     UserLogin,
     UserResponse,
     TokenResponse,
+    FeedbackCreate,
+    FeedbackResponse,
+    FeedbackAnalytics,
 )
+
 
 # --------------------------------------------------
 # SECURITY CONFIGURATION
@@ -44,19 +49,19 @@ ACCESS_TOKEN_MINUTES = 60
 password_hash = PasswordHash.recommended()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-# Create missing tables only. Existing tables and rows are preserved.
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="SmartCampus Complaint Management System",
-    description="API for campus complaints and grievances",
-    version="2.0.0",
+    description="API for campus complaints, grievances and student feedback",
+    version="3.0.0",
 )
 
-# Uploaded images are stored locally in backend/uploads.
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+MAX_IMAGE_SIZE = 5 * 1024 * 1024
+
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -65,13 +70,26 @@ ALLOWED_IMAGE_TYPES = {
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
+
+# --------------------------------------------------
+# CORS CONFIGURATION
+# --------------------------------------------------
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 DEPARTMENTS = {
     "Infrastructure": "Maintenance Department",
@@ -451,6 +469,7 @@ async def upload_complaint_image(
         )
 
     extension = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
+
     if extension is None:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -458,6 +477,7 @@ async def upload_complaint_image(
         )
 
     contents = await file.read(MAX_IMAGE_SIZE + 1)
+
     if not contents:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -470,13 +490,17 @@ async def upload_complaint_image(
             detail="Image must be 5 MB or smaller.",
         )
 
-    # Check the file signature rather than trusting only the browser MIME type.
     valid_signature = (
         (extension == ".jpg" and contents.startswith(bytes.fromhex("FFD8FF")))
         or (extension == ".png" and contents.startswith(bytes.fromhex("89504E470D0A1A0A")))
-        or (extension == ".webp" and len(contents) >= 12
-            and contents[:4] == b"RIFF" and contents[8:12] == b"WEBP")
+        or (
+            extension == ".webp"
+            and len(contents) >= 12
+            and contents[:4] == b"RIFF"
+            and contents[8:12] == b"WEBP"
+        )
     )
+
     if not valid_signature:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -489,14 +513,15 @@ async def upload_complaint_image(
     try:
         destination.write_bytes(contents)
 
-        # Remove the old uploaded image after the new one has been saved.
         old_image_url = complaint.image_url
         complaint.image_url = f"/uploads/{filename}"
+
         db.commit()
         db.refresh(complaint)
 
         if old_image_url and old_image_url.startswith("/uploads/"):
             old_path = UPLOAD_DIR / Path(old_image_url).name
+
             if old_path.is_file() and old_path.name != filename:
                 old_path.unlink(missing_ok=True)
 
@@ -506,15 +531,173 @@ async def upload_complaint_image(
             "image_url": complaint.image_url,
         }
 
-    except HTTPException:
-        raise
     except Exception:
         db.rollback()
+
         if destination.exists():
             destination.unlink(missing_ok=True)
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not save the complaint image.",
         )
+
     finally:
         await file.close()
+
+
+# --------------------------------------------------
+# STUDENT FEEDBACK
+# Students can submit feedback once after resolution.
+# --------------------------------------------------
+
+@app.post("/api/complaints/{complaint_id}/feedback")
+def submit_feedback(
+    complaint_id: int,
+    feedback_data: FeedbackCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.query(Complaint).filter(
+        Complaint.id == complaint_id
+    ).first()
+
+    if complaint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    if complaint.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only review your own complaints.",
+        )
+
+    if complaint.status != "Resolved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feedback can only be submitted after resolution.",
+        )
+
+    if complaint.feedback is not None or complaint.feedback_rating is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Feedback has already been submitted.",
+        )
+
+    feedback_text = feedback_data.feedback.strip()
+
+    if not feedback_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feedback cannot be empty.",
+        )
+
+    complaint.feedback = feedback_text
+    complaint.feedback_rating = feedback_data.rating
+    complaint.feedback_submitted_at = datetime.now(timezone.utc)
+
+    try:
+        db.commit()
+        db.refresh(complaint)
+
+        return {
+            "message": "Feedback submitted successfully.",
+            "ticket_id": complaint.ticket_id,
+            "feedback": complaint.feedback,
+            "rating": complaint.feedback_rating,
+        }
+
+    except Exception:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not submit feedback.",
+        )
+
+
+# --------------------------------------------------
+# ADMIN: VIEW ALL STUDENT FEEDBACK
+# --------------------------------------------------
+
+@app.get(
+    "/api/admin/feedback",
+    response_model=list[FeedbackResponse],
+)
+def get_all_feedback(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    complaints = (
+        db.query(Complaint)
+        .filter(
+            Complaint.feedback.isnot(None),
+            Complaint.feedback_rating.isnot(None),
+            Complaint.feedback_submitted_at.isnot(None),
+        )
+        .order_by(Complaint.feedback_submitted_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "complaint_id": complaint.id,
+            "ticket_id": complaint.ticket_id,
+            "title": complaint.title,
+            "feedback": complaint.feedback,
+            "rating": complaint.feedback_rating,
+            "feedback_submitted_at": complaint.feedback_submitted_at,
+            "student_name": (
+                complaint.owner.name
+                if complaint.owner else "Unknown"
+            ),
+        }
+        for complaint in complaints
+    ]
+
+
+# --------------------------------------------------
+# ADMIN: FEEDBACK ANALYTICS
+# --------------------------------------------------
+
+@app.get(
+    "/api/admin/feedback/analytics",
+    response_model=FeedbackAnalytics,
+)
+def get_feedback_analytics(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    total_feedback, average_rating = (
+        db.query(
+            func.count(Complaint.id),
+            func.avg(Complaint.feedback_rating),
+        )
+        .filter(Complaint.feedback_rating.isnot(None))
+        .first()
+    )
+
+    rating_rows = (
+        db.query(
+            Complaint.feedback_rating,
+            func.count(Complaint.id),
+        )
+        .filter(Complaint.feedback_rating.isnot(None))
+        .group_by(Complaint.feedback_rating)
+        .all()
+    )
+
+    distribution = {
+        rating: 0 for rating in range(1, 6)
+    }
+
+    for rating, count in rating_rows:
+        distribution[rating] = count
+
+    return {
+        "total_feedback": total_feedback or 0,
+        "average_rating": round(float(average_rating or 0), 2),
+        "rating_distribution": distribution,
+    }
