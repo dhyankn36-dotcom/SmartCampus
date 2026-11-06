@@ -1,0 +1,79 @@
+
+import pytest
+from pydantic import ValidationError
+
+from schemas import (
+    UserRegister,
+    ComplaintCreate,
+    FeedbackCreate,
+)
+
+
+def test_valid_user_registration():
+    user = UserRegister(
+        name="Test Student",
+        email="student@example.com",
+        password="password123",
+    )
+    assert user.name == "Test Student"
+
+
+def test_invalid_user_email():
+    with pytest.raises(ValidationError):
+        UserRegister(
+            name="Test Student",
+            email="invalid-email",
+            password="password123",
+        )
+
+
+def test_short_password_rejected():
+    with pytest.raises(ValidationError):
+        UserRegister(
+            name="Test Student",
+            email="student@example.com",
+            password="123",
+        )
+
+
+def test_valid_complaint():
+    complaint = ComplaintCreate(
+        title="WiFi not working",
+        description="Internet connection is unavailable.",
+        category="Wi-Fi",
+    )
+    assert complaint.category == "Wi-Fi"
+
+
+def test_empty_complaint_title_rejected():
+    with pytest.raises(ValidationError):
+        ComplaintCreate(
+            title="",
+            description="Internet connection is unavailable.",
+            category="Wi-Fi",
+        )
+
+
+def test_valid_feedback():
+    feedback = FeedbackCreate(
+        feedback="Issue resolved successfully.",
+        rating=5,
+    )
+    assert feedback.rating == 5
+
+
+@pytest.mark.parametrize("rating", [0, 6, -1])
+def test_invalid_feedback_rating(rating):
+    with pytest.raises(ValidationError):
+        FeedbackCreate(
+            feedback="Test feedback",
+            rating=rating,
+        )
+
+
+def test_empty_feedback_rejected():
+    with pytest.raises(ValidationError):
+        FeedbackCreate(
+            feedback="",
+            rating=4,
+        )
