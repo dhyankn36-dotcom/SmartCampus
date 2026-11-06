@@ -2,3 +2,27 @@
 .venv/
 __pycache__/
 *.pyc
+# Private complaint uploads
+backend/uploads/
+
+# Local database backups
+*.sql
+
+# Duplicate frontend files
+frontend/src/* copy.jsx
+# Private complaint uploads
+/backend/uploads/
+
+# Local database backups
+*.sql
+
+# Duplicate frontend backup
+/frontend/src/App copy.jsx
+# Private complaint uploads
+/backend/uploads/
+
+# Local database backups
+*.sql
+
+# Duplicate frontend backup
+/frontend/src/App copy.jsx
