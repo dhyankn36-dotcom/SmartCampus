@@ -5,13 +5,16 @@ load_dotenv()
 
 import os
 import uuid
+import time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 
 import jwt
 from pwdlib import PasswordHash
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import func
@@ -55,7 +58,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="SmartCampus Complaint Management System",
     description="API for campus complaints, grievances and student feedback",
-    version="4.0.0",
+    version="4.1.0",
 )
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
@@ -70,6 +73,122 @@ ALLOWED_IMAGE_TYPES = {
 }
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+
+
+# --------------------------------------------------
+# RATE LIMITING
+# --------------------------------------------------
+
+RATE_LIMITS = {
+    "register": (3, 60 * 60),
+    "login": (5, 60),
+    "create_complaint": (10, 60),
+    "upload_image": (5, 60),
+    "submit_feedback": (3, 60 * 60),
+}
+
+rate_limit_buckets = {}
+rate_limit_lock = Lock()
+
+
+def get_rate_limit_group(method: str, path: str):
+    if method != "POST":
+        return None
+
+    if path == "/api/auth/register":
+        return "register"
+
+    if path == "/api/auth/login":
+        return "login"
+
+    if path == "/api/complaints":
+        return "create_complaint"
+
+    parts = path.strip("/").split("/")
+
+    if (
+        len(parts) == 4
+        and parts[0] == "api"
+        and parts[1] == "complaints"
+        and parts[2].isdigit()
+        and parts[3] == "image"
+    ):
+        return "upload_image"
+
+    if (
+        len(parts) == 4
+        and parts[0] == "api"
+        and parts[1] == "complaints"
+        and parts[2].isdigit()
+        and parts[3] == "feedback"
+    ):
+        return "submit_feedback"
+
+    return None
+
+
+def check_rate_limit(group: str, client_ip: str):
+    limit, window = RATE_LIMITS[group]
+    now = time.monotonic()
+    key = (group, client_ip)
+
+    with rate_limit_lock:
+        window_start, request_count = rate_limit_buckets.get(
+            key, (now, 0)
+        )
+
+        if now - window_start >= window:
+            window_start = now
+            request_count = 0
+
+        if request_count >= limit:
+            retry_after = max(
+                1,
+                int(window - (now - window_start)) + 1,
+            )
+            return False, retry_after
+
+        rate_limit_buckets[key] = (
+            window_start,
+            request_count + 1,
+        )
+
+    return True, 0
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    group = get_rate_limit_group(
+        request.method,
+        request.url.path,
+    )
+
+    if group is None:
+        return await call_next(request)
+
+    client_ip = (
+        request.client.host
+        if request.client
+        else "unknown"
+    )
+
+    allowed, retry_after = check_rate_limit(
+        group,
+        client_ip,
+    )
+
+    if not allowed:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": "Too many requests. Please try again later."
+            },
+            headers={
+                "Retry-After": str(retry_after)
+            },
+        )
+
+    return await call_next(request)
 
 
 # --------------------------------------------------
@@ -345,7 +464,6 @@ def create_complaint(
 
 # --------------------------------------------------
 # LIST COMPLAINTS
-# Students see their own. Admins can see all.
 # --------------------------------------------------
 
 @app.get(
@@ -376,13 +494,11 @@ def list_complaints(
 ):
     query = db.query(Complaint)
 
-    # Students can only retrieve their own complaints.
     if current_user.role != "admin":
         query = query.filter(
             Complaint.user_id == current_user.id
         )
 
-    # Search ticket ID, title, and description.
     if search:
         search_term = f"%{search.strip()}%"
         query = query.filter(
@@ -391,7 +507,6 @@ def list_complaints(
             | (Complaint.description.ilike(search_term))
         )
 
-    # Apply exact status and category filters when provided.
     if status_filter:
         if status_filter not in ALLOWED_STATUSES:
             raise HTTPException(
@@ -408,8 +523,8 @@ def list_complaints(
             )
         query = query.filter(Complaint.category == category)
 
-    # Keep newest complaints first, then apply pagination.
     offset = (page - 1) * page_size
+
     return (
         query.order_by(Complaint.id.desc())
         .offset(offset)
@@ -453,8 +568,6 @@ def get_complaint(
 
 # --------------------------------------------------
 # UPDATE COMPLAINT STATUS
-# Only admins can update status.
-# Every actual change is recorded in status history.
 # --------------------------------------------------
 
 @app.patch("/api/complaints/{complaint_id}/status")
@@ -523,7 +636,6 @@ def update_complaint_status(
 
 # --------------------------------------------------
 # VIEW COMPLAINT STATUS HISTORY
-# Complaint owner or administrator only.
 # --------------------------------------------------
 
 @app.get(
@@ -581,7 +693,6 @@ def get_complaint_history(
 
 # --------------------------------------------------
 # UPLOAD COMPLAINT IMAGE
-# Complaint owner or administrator only.
 # --------------------------------------------------
 
 @app.post("/api/complaints/{complaint_id}/image")
@@ -687,7 +798,6 @@ async def upload_complaint_image(
 
 # --------------------------------------------------
 # STUDENT FEEDBACK
-# Students can submit feedback once after resolution.
 # --------------------------------------------------
 
 @app.post("/api/complaints/{complaint_id}/feedback")

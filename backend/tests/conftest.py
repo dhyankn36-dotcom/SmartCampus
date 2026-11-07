@@ -50,8 +50,13 @@ main.app.dependency_overrides[main.get_db] = override_get_db
 def reset_database():
     Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
+
+    main.rate_limit_buckets.clear()
+
     yield
+
     Base.metadata.drop_all(bind=test_engine)
+    main.rate_limit_buckets.clear()
 
 
 @pytest.fixture
