@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from pwdlib import PasswordHash
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
@@ -353,17 +353,69 @@ def create_complaint(
     response_model=list[ComplaintResponse],
 )
 def list_complaints(
+    search: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Search by ticket ID, title, or description.",
+    ),
+    status_filter: str | None = Query(
+        default=None,
+        alias="status",
+        description="Filter by complaint status.",
+    ),
+    category: str | None = Query(
+        default=None,
+        max_length=50,
+        description="Filter by complaint category.",
+    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     query = db.query(Complaint)
 
+    # Students can only retrieve their own complaints.
     if current_user.role != "admin":
         query = query.filter(
             Complaint.user_id == current_user.id
         )
 
-    return query.order_by(Complaint.id.desc()).all()
+    # Search ticket ID, title, and description.
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.filter(
+            (Complaint.ticket_id.ilike(search_term))
+            | (Complaint.title.ilike(search_term))
+            | (Complaint.description.ilike(search_term))
+        )
+
+    # Apply exact status and category filters when provided.
+    if status_filter:
+        if status_filter not in ALLOWED_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid status filter.",
+            )
+        query = query.filter(Complaint.status == status_filter)
+
+    if category:
+        if category not in DEPARTMENTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid category filter.",
+            )
+        query = query.filter(Complaint.category == category)
+
+    # Keep newest complaints first, then apply pagination.
+    offset = (page - 1) * page_size
+    return (
+        query.order_by(Complaint.id.desc())
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
 
 
 # --------------------------------------------------
