@@ -6,6 +6,8 @@ load_dotenv()
 import os
 import uuid
 import time
+import json
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -39,6 +41,53 @@ from schemas import (
 
 
 # --------------------------------------------------
+# STRUCTURED LOGGING CONFIGURATION
+# --------------------------------------------------
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        optional_fields = [
+            "event",
+            "request_id",
+            "method",
+            "path",
+            "status_code",
+            "duration_ms",
+        ]
+
+        for field in optional_fields:
+            value = getattr(record, field, None)
+            if value is not None:
+                log_entry[field] = value
+
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(
+                record.exc_info
+            )
+
+        return json.dumps(log_entry)
+
+
+logger = logging.getLogger("smartcampus")
+logger.setLevel(
+    os.getenv("LOG_LEVEL", "INFO").upper()
+)
+logger.propagate = False
+
+if not logger.handlers:
+    log_handler = logging.StreamHandler()
+    log_handler.setFormatter(JSONFormatter())
+    logger.addHandler(log_handler)
+
+
+# --------------------------------------------------
 # SECURITY CONFIGURATION
 # --------------------------------------------------
 
@@ -58,7 +107,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="SmartCampus Complaint Management System",
     description="API for campus complaints, grievances and student feedback",
-    version="4.1.0",
+    version="4.2.0",
 )
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
@@ -156,39 +205,124 @@ def check_rate_limit(group: str, client_ip: str):
     return True, 0
 
 
+# --------------------------------------------------
+# REQUEST LOGGING AND RATE-LIMITING MIDDLEWARE
+# --------------------------------------------------
+
 @app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    group = get_rate_limit_group(
-        request.method,
-        request.url.path,
-    )
+async def request_logging_and_rate_limit_middleware(
+    request: Request,
+    call_next,
+):
+    request_id = str(uuid.uuid4())
+    start_time = time.perf_counter()
 
-    if group is None:
-        return await call_next(request)
+    method = request.method
+    path = request.url.path
 
-    client_ip = (
-        request.client.host
-        if request.client
-        else "unknown"
-    )
+    request.state.request_id = request_id
 
-    allowed, retry_after = check_rate_limit(
-        group,
-        client_ip,
-    )
+    group = get_rate_limit_group(method, path)
 
-    if not allowed:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={
-                "detail": "Too many requests. Please try again later."
-            },
-            headers={
-                "Retry-After": str(retry_after)
+    if group is not None:
+        client_ip = (
+            request.client.host
+            if request.client
+            else "unknown"
+        )
+
+        allowed, retry_after = check_rate_limit(
+            group,
+            client_ip,
+        )
+
+        if not allowed:
+            duration_ms = round(
+                (time.perf_counter() - start_time) * 1000,
+                2,
+            )
+
+            logger.warning(
+                "Request rejected by rate limiter",
+                extra={
+                    "event": "rate_limit_exceeded",
+                    "request_id": request_id,
+                    "method": method,
+                    "path": path,
+                    "status_code": 429,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            response = JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "detail": "Too many requests. Please try again later."
+                },
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-Request-ID": request_id,
+                },
+            )
+
+            return response
+
+    try:
+        response = await call_next(request)
+
+        duration_ms = round(
+            (time.perf_counter() - start_time) * 1000,
+            2,
+        )
+
+        log_data = {
+            "event": "http_request",
+            "request_id": request_id,
+            "method": method,
+            "path": path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        }
+
+        if response.status_code >= 500:
+            logger.error(
+                "Request completed with server error",
+                extra=log_data,
+            )
+        elif response.status_code >= 400:
+            logger.warning(
+                "Request completed with client error",
+                extra=log_data,
+            )
+        else:
+            logger.info(
+                "Request completed successfully",
+                extra=log_data,
+            )
+
+        response.headers["X-Request-ID"] = request_id
+
+        return response
+
+    except Exception:
+        duration_ms = round(
+            (time.perf_counter() - start_time) * 1000,
+            2,
+        )
+
+        logger.exception(
+            "Unhandled exception while processing request",
+            extra={
+                "event": "unhandled_request_exception",
+                "request_id": request_id,
+                "method": method,
+                "path": path,
+                "status_code": 500,
+                "duration_ms": duration_ms,
             },
         )
 
-    return await call_next(request)
+        raise
 
 
 # --------------------------------------------------
@@ -333,6 +467,15 @@ def register_user(
     try:
         db.commit()
         db.refresh(user)
+
+        logger.info(
+            "Student account registered",
+            extra={
+                "event": "user_registered",
+                "user_id": user.id,
+            },
+        )
+
         return user
 
     except IntegrityError:
@@ -344,6 +487,10 @@ def register_user(
 
     except Exception:
         db.rollback()
+        logger.exception(
+            "Account registration failed",
+            extra={"event": "registration_failed"},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create your account.",
@@ -373,11 +520,24 @@ def login_user(
             user.hashed_password,
         )
     ):
+        logger.warning(
+            "Authentication attempt failed",
+            extra={"event": "login_failed"},
+        )
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    logger.info(
+        "User authenticated successfully",
+        extra={
+            "event": "login_success",
+            "user_id": user.id,
+        },
+    )
 
     return {
         "access_token": create_access_token(user),
@@ -452,10 +612,26 @@ def create_complaint(
         db.commit()
         db.refresh(complaint)
 
+        logger.info(
+            "Complaint created",
+            extra={
+                "event": "complaint_created",
+                "user_id": current_user.id,
+                "complaint_id": complaint.id,
+            },
+        )
+
         return complaint
 
     except Exception:
         db.rollback()
+        logger.exception(
+            "Complaint creation failed",
+            extra={
+                "event": "complaint_creation_failed",
+                "user_id": current_user.id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not create complaint.",
@@ -619,8 +795,26 @@ def update_complaint_status(
         db.commit()
         db.refresh(complaint)
 
+        logger.info(
+            "Complaint status changed",
+            extra={
+                "event": "complaint_status_changed",
+                "user_id": current_user.id,
+                "complaint_id": complaint.id,
+                "old_status": old_status,
+                "new_status": complaint.status,
+            },
+        )
+
     except Exception:
         db.rollback()
+        logger.exception(
+            "Complaint status update failed",
+            extra={
+                "event": "complaint_status_update_failed",
+                "complaint_id": complaint_id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not update complaint status.",
@@ -775,6 +969,15 @@ async def upload_complaint_image(
             if old_path.is_file() and old_path.name != filename:
                 old_path.unlink(missing_ok=True)
 
+        logger.info(
+            "Complaint image uploaded",
+            extra={
+                "event": "complaint_image_uploaded",
+                "user_id": current_user.id,
+                "complaint_id": complaint.id,
+            },
+        )
+
         return {
             "message": "Image uploaded successfully.",
             "ticket_id": complaint.ticket_id,
@@ -786,6 +989,14 @@ async def upload_complaint_image(
 
         if destination.exists():
             destination.unlink(missing_ok=True)
+
+        logger.exception(
+            "Complaint image upload failed",
+            extra={
+                "event": "complaint_image_upload_failed",
+                "complaint_id": complaint_id,
+            },
+        )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -851,6 +1062,16 @@ def submit_feedback(
         db.commit()
         db.refresh(complaint)
 
+        logger.info(
+            "Student feedback submitted",
+            extra={
+                "event": "feedback_submitted",
+                "user_id": current_user.id,
+                "complaint_id": complaint.id,
+                "rating": complaint.feedback_rating,
+            },
+        )
+
         return {
             "message": "Feedback submitted successfully.",
             "ticket_id": complaint.ticket_id,
@@ -860,6 +1081,14 @@ def submit_feedback(
 
     except Exception:
         db.rollback()
+
+        logger.exception(
+            "Feedback submission failed",
+            extra={
+                "event": "feedback_submission_failed",
+                "complaint_id": complaint_id,
+            },
+        )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
