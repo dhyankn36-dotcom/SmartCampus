@@ -1,4 +1,5 @@
 
+import AdminUsers from "./AdminUsers";
 import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 
@@ -748,17 +749,31 @@ function App() {
         </button>
 
         {isAdmin && (
-          <button
-            className="nav-item"
-            type="button"
-            onClick={() =>
-              document
-                .getElementById("feedback-analytics")
-                ?.scrollIntoView({ behavior: "smooth" })
-            }
-          >
-            <span>★</span> Feedback Analytics
-          </button>
+          <>
+            <button
+              className="nav-item"
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById("admin-users")
+                  ?.scrollIntoView({ behavior: "smooth" })
+              }
+            >
+              <span>♙</span> User Management
+            </button>
+
+            <button
+              className="nav-item"
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById("feedback-analytics")
+                  ?.scrollIntoView({ behavior: "smooth" })
+              }
+            >
+              <span>★</span> Feedback Analytics
+            </button>
+          </>
         )}
 
         <div className="sidebar-bottom">
@@ -1231,7 +1246,7 @@ function App() {
                             className="history-expanded-row"
                             key={`history-${complaint.id}`}
                           >
-                            <td colSpan={isAdmin ? 6 : 6}>
+                            <td colSpan={6}>
                               <div className="history-container">
                                 <div className="history-header">
                                   <div>
@@ -1387,6 +1402,9 @@ function App() {
               </button>
             </div>
           </section>
+
+          {/* ADMIN USER MANAGEMENT */}
+          {isAdmin && <AdminUsers token={token} user={user} />}
 
           {!isAdmin && (
             <section className="feedback-section">

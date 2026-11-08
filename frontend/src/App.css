@@ -224,3 +224,180 @@
     gap: 10px;
   }
 }
+
+/* =========================================
+   ADMIN USER MANAGEMENT
+========================================= */
+
+.admin-users-section {
+  margin-top: 28px;
+}
+
+.admin-users-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 0 14px;
+}
+
+.admin-users-toolbar .search-box {
+  flex: 1;
+  min-width: 180px;
+}
+
+.admin-role-filter {
+  min-width: 160px;
+  padding: 11px 13px;
+  border: 1px solid #e1e6ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #263449;
+  font: inherit;
+}
+
+.admin-users-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #7a8495;
+  font-size: 12px;
+}
+
+.admin-users-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-users-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.admin-users-table th,
+.admin-users-table td {
+  padding: 15px 13px;
+  text-align: left;
+  border-bottom: 1px solid #edf0f5;
+  font-size: 13px;
+}
+
+.admin-users-table th {
+  color: #788397;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-user-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-user-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #edf2ff;
+  color: #315bd5;
+  font-weight: 700;
+}
+
+.role-pill {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.role-pill.admin {
+  background: #eeeaff;
+  color: #6845bd;
+}
+
+.role-pill.student {
+  background: #e9f7ef;
+  color: #25814c;
+}
+
+.user-action-button {
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.user-action-button.promote {
+  background: #eaf0ff;
+  color: #2857c5;
+}
+
+.user-action-button.demote {
+  background: #fff0ed;
+  color: #bd493b;
+}
+
+.user-action-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.user-current-account {
+  color: #818b9a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.admin-users-message,
+.admin-users-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin: 14px 0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.admin-users-message {
+  background: #eaf7ef;
+  color: #267447;
+}
+
+.admin-users-error {
+  background: #fff0ee;
+  color: #b83e32;
+}
+
+.admin-users-message button,
+.admin-users-error button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .admin-users-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-role-filter {
+    width: 100%;
+  }
+
+  .admin-users-summary {
+    flex-direction: column;
+  }
+}
