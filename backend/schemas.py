@@ -30,13 +30,11 @@ class UserRegister(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "name": "Dhyan Kumar",
-                    "email": "student@example.com",
-                    "password": "SecurePass123",
-                }
-            ]
+            "examples": [{
+                "name": "Dhyan Kumar",
+                "email": "student@example.com",
+                "password": "SecurePass123",
+            }]
         }
     )
 
@@ -55,12 +53,10 @@ class UserLogin(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "email": "student@example.com",
-                    "password": "SecurePass123",
-                }
-            ]
+            "examples": [{
+                "email": "student@example.com",
+                "password": "SecurePass123",
+            }]
         }
     )
 
@@ -74,6 +70,29 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     role: str
+
+
+class AdminUserResponse(BaseModel):
+    """User details returned by administrator user management."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    email: EmailStr
+    role: str
+    created_at: datetime
+
+
+class UserRoleUpdate(BaseModel):
+    """Request body for changing a user's role."""
+
+    role: str = Field(
+        min_length=1,
+        max_length=20,
+        description="Allowed roles: student or admin.",
+        examples=["admin"],
+    )
 
 
 class TokenResponse(BaseModel):
@@ -117,13 +136,11 @@ class ComplaintCreate(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "title": "Broken classroom fan",
-                    "description": "The ceiling fan in classroom 204 is not working.",
-                    "category": "Infrastructure",
-                }
-            ]
+            "examples": [{
+                "title": "Broken classroom fan",
+                "description": "The ceiling fan in classroom 204 is not working.",
+                "category": "Infrastructure",
+            }]
         }
     )
 
@@ -140,11 +157,7 @@ class ComplaintStatusUpdate(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "status": "In Progress"
-                }
-            ]
+            "examples": [{"status": "In Progress"}]
         }
     )
 
@@ -206,12 +219,10 @@ class FeedbackCreate(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "feedback": "The issue was resolved quickly. Thank you.",
-                    "rating": 5,
-                }
-            ]
+            "examples": [{
+                "feedback": "The issue was resolved quickly. Thank you.",
+                "rating": 5,
+            }]
         }
     )
 

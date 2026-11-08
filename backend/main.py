@@ -42,6 +42,8 @@ from schemas import (
     UserRegister,
     UserLogin,
     UserResponse,
+    AdminUserResponse,
+    UserRoleUpdate,
     TokenResponse,
     FeedbackCreate,
     FeedbackResponse,
@@ -76,6 +78,9 @@ class JSONFormatter(logging.Formatter):
             "new_status",
             "rating",
             "action",
+            "target_user_id",
+            "old_role",
+            "new_role",
         ]
 
         for field in optional_fields:
@@ -124,7 +129,6 @@ bearer_scheme = HTTPBearer(
     ),
 )
 
-# Creates newly added tables without dropping existing data.
 Base.metadata.create_all(bind=engine)
 
 
@@ -171,10 +175,11 @@ API_TAGS = [
     },
     {
         "name": "Admin Audit Logs",
-        "description": (
-            "Administrator-only records of actions performed "
-            "on campus complaints."
-        ),
+        "description": "Administrator-only records of system actions.",
+    },
+    {
+        "name": "Admin User Management",
+        "description": "Administrator-only user listing and role management.",
     },
 ]
 
@@ -199,6 +204,7 @@ to manage and resolve complaints.
 - Student feedback and ratings
 - Administrator feedback analytics
 - Administrative audit logs
+- Role-based user management
 - Request tracking and rate limiting
 
 ## Authentication
@@ -206,7 +212,7 @@ to manage and resolve complaints.
 1. Register using `POST /api/auth/register`.
 2. Log in using `POST /api/auth/login`.
 3. Copy the `access_token` from the response.
-4. Select **Authorize** and enter the token.
+4. Select Authorize and enter the token.
 5. Use the protected endpoints.
 
 ## User roles
@@ -225,6 +231,7 @@ to manage and resolve complaints.
 - Access student feedback.
 - View analytics.
 - View administrative audit logs.
+- List users and manage user roles.
 
 ## Complaint categories
 
@@ -241,14 +248,8 @@ to manage and resolve complaints.
 - In Progress
 - Resolved
 - Rejected
-
-## Audit logs
-
-Successful administrator complaint-status changes are recorded with
-the administrator, complaint, previous status, new status, and timestamp.
-Only administrators can view these records.
 """,
-    version="4.4.0",
+    version="4.5.0",
     openapi_tags=API_TAGS,
     contact={"name": "SmartCampus API Support"},
 )
@@ -506,6 +507,8 @@ ALLOWED_STATUSES = {
     "Resolved",
     "Rejected",
 }
+
+ALLOWED_ROLES = {"student", "admin"}
 
 
 # --------------------------------------------------
@@ -1114,17 +1117,8 @@ def get_audit_logs(
         description="Optionally filter by action name.",
         examples=["complaint_status_updated"],
     ),
-    page: int = Query(
-        default=1,
-        ge=1,
-        description="Page number, starting from 1.",
-    ),
-    page_size: int = Query(
-        default=50,
-        ge=1,
-        le=100,
-        description="Number of records per page. Maximum: 100.",
-    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1149,6 +1143,204 @@ def get_audit_logs(
         .limit(page_size)
         .all()
     )
+
+
+# --------------------------------------------------
+# ADMIN: LIST, SEARCH, AND FILTER USERS
+# --------------------------------------------------
+
+@app.get(
+    "/api/admin/users",
+    response_model=list[AdminUserResponse],
+    tags=["Admin User Management"],
+    summary="List and search users",
+    description=(
+        "Administrator-only endpoint. Supports searching by name or "
+        "email, filtering by role, and pagination. Password hashes "
+        "are never returned."
+    ),
+)
+def get_admin_users(
+    search: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Search users by name or email.",
+    ),
+    role: str | None = Query(
+        default=None,
+        description="Filter users by student or admin role.",
+    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(User)
+
+    if role:
+        role = role.strip().lower()
+
+        if role not in ALLOWED_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Role filter must be student or admin.",
+            )
+
+        query = query.filter(User.role == role)
+
+    if search:
+        search_term = f"%{search.strip()}%"
+
+        query = query.filter(
+            (User.name.ilike(search_term))
+            | (User.email.ilike(search_term))
+        )
+
+    return (
+        query.order_by(
+            User.created_at.desc(),
+            User.id.desc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+
+# --------------------------------------------------
+# ADMIN: UPDATE USER ROLE
+# --------------------------------------------------
+
+@app.patch(
+    "/api/admin/users/{user_id}/role",
+    tags=["Admin User Management"],
+    summary="Promote or demote a user",
+    description=(
+        "Administrator-only endpoint. Changes a user's role to "
+        "student or admin and records the change in the audit log."
+    ),
+    responses={
+        200: {"description": "User role updated successfully."},
+        403: {"description": "Administrator access required."},
+        404: {"description": "User not found."},
+        409: {"description": "Role change is not permitted."},
+        422: {"description": "Invalid role."},
+    },
+)
+def update_user_role(
+    user_id: int,
+    role_data: UserRoleUpdate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    new_role = role_data.role.strip().lower()
+
+    if new_role not in ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Role must be either student or admin.",
+        )
+
+    target_user = db.query(User).filter(
+        User.id == user_id
+    ).first()
+
+    if target_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    old_role = target_user.role
+
+    if old_role == new_role:
+        return {
+            "message": "User already has this role.",
+            "user": {
+                "id": target_user.id,
+                "name": target_user.name,
+                "email": target_user.email,
+                "role": target_user.role,
+                "created_at": target_user.created_at,
+            },
+        }
+
+    if target_user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot change your own administrator role.",
+        )
+
+    if old_role == "admin" and new_role == "student":
+        admin_count = (
+            db.query(func.count(User.id))
+            .filter(User.role == "admin")
+            .scalar()
+        )
+
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The last administrator cannot be demoted.",
+            )
+
+    try:
+        target_user.role = new_role
+
+        db.add(
+            AuditLog(
+                actor_user_id=current_user.id,
+                actor_name=current_user.name,
+                complaint_id=None,
+                action="user_role_updated",
+                old_value=old_role,
+                new_value=new_role,
+            )
+        )
+
+        db.commit()
+        db.refresh(target_user)
+
+        logger.info(
+            "User role updated",
+            extra={
+                "event": "user_role_updated",
+                "user_id": current_user.id,
+                "target_user_id": target_user.id,
+                "old_role": old_role,
+                "new_role": new_role,
+                "action": "user_role_updated",
+            },
+        )
+
+        return {
+            "message": "User role updated successfully.",
+            "user": {
+                "id": target_user.id,
+                "name": target_user.name,
+                "email": target_user.email,
+                "role": target_user.role,
+                "created_at": target_user.created_at,
+            },
+        }
+
+    except Exception:
+        db.rollback()
+
+        logger.exception(
+            "User role update failed",
+            extra={
+                "event": "user_role_update_failed",
+                "target_user_id": user_id,
+                "user_id": current_user.id,
+            },
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not update user role.",
+        )
 
 
 # --------------------------------------------------
