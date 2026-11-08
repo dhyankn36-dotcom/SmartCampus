@@ -13,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 import jwt
+import cloudinary
+import cloudinary.uploader
+
 from pwdlib import PasswordHash
 from fastapi import (
     Depends,
@@ -130,6 +133,40 @@ bearer_scheme = HTTPBearer(
 )
 
 Base.metadata.create_all(bind=engine)
+
+
+# --------------------------------------------------
+# CLOUDINARY CONFIGURATION
+# --------------------------------------------------
+
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+
+CLOUDINARY_ENABLED = all([
+    CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET,
+])
+
+if CLOUDINARY_ENABLED:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
+
+    logger.info(
+        "Cloudinary image storage configured",
+        extra={"event": "cloudinary_configured"},
+    )
+else:
+    logger.warning(
+        "Cloudinary credentials are not configured. "
+        "Using local image storage.",
+        extra={"event": "local_image_storage_enabled"},
+    )
 
 
 # --------------------------------------------------
@@ -478,16 +515,25 @@ async def request_logging_and_rate_limit_middleware(
 # CORS CONFIGURATION
 # --------------------------------------------------
 
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL", ""
+).strip().rstrip("/")
+
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+]
+
+if FRONTEND_URL and FRONTEND_URL not in ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS.append(FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:5175",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1371,7 +1417,10 @@ async def upload_complaint_image(
             detail="Complaint not found.",
         )
 
-    if current_user.role != "admin" and complaint.user_id != current_user.id:
+    if (
+        current_user.role != "admin"
+        and complaint.user_id != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only upload images to your own complaints.",
@@ -1428,19 +1477,31 @@ async def upload_complaint_image(
     destination = UPLOAD_DIR / filename
 
     try:
-        destination.write_bytes(contents)
+        if CLOUDINARY_ENABLED:
+            upload_result = cloudinary.uploader.upload(
+                contents,
+                resource_type="image",
+                folder="smartcampus/complaints",
+                public_id=uuid.uuid4().hex,
+                overwrite=False,
+                allowed_formats=["jpg", "jpeg", "png", "webp"],
+            )
 
-        old_image_url = complaint.image_url
-        complaint.image_url = f"/uploads/{filename}"
+            image_url = upload_result.get("secure_url")
+
+            if not image_url:
+                raise RuntimeError(
+                    "Cloudinary did not return a secure image URL."
+                )
+
+        else:
+            destination.write_bytes(contents)
+            image_url = f"/uploads/{filename}"
+
+        complaint.image_url = image_url
 
         db.commit()
         db.refresh(complaint)
-
-        if old_image_url and old_image_url.startswith("/uploads/"):
-            old_path = UPLOAD_DIR / Path(old_image_url).name
-
-            if old_path.is_file() and old_path.name != filename:
-                old_path.unlink(missing_ok=True)
 
         logger.info(
             "Complaint image uploaded",
@@ -1517,7 +1578,10 @@ def submit_feedback(
             detail="Feedback can only be submitted after resolution.",
         )
 
-    if complaint.feedback is not None or complaint.feedback_rating is not None:
+    if (
+        complaint.feedback is not None
+        or complaint.feedback_rating is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Feedback has already been submitted.",

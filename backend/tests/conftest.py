@@ -59,6 +59,23 @@ def reset_database():
     main.rate_limit_buckets.clear()
 
 
+@pytest.fixture(autouse=True)
+def mock_cloudinary_upload(monkeypatch):
+    def fake_cloudinary_upload(file, **kwargs):
+        return {
+            "secure_url": (
+                "https://res.cloudinary.com/test-cloud/"
+                "image/upload/test-image.png"
+            )
+        }
+
+    monkeypatch.setattr(
+        main.cloudinary.uploader,
+        "upload",
+        fake_cloudinary_upload,
+    )
+
+
 @pytest.fixture
 def client():
     with TestClient(main.app) as test_client:

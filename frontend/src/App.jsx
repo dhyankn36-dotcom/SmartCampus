@@ -28,6 +28,26 @@ async function readResponse(response) {
   return data;
 }
 
+// Supports both absolute Cloudinary URLs and relative local upload paths.
+function getImageUrl(imageUrl) {
+  if (!imageUrl) return "";
+
+  try {
+    const resolvedUrl = new URL(imageUrl, API_URL);
+
+    if (
+      resolvedUrl.protocol !== "http:" &&
+      resolvedUrl.protocol !== "https:"
+    ) {
+      return "";
+    }
+
+    return resolvedUrl.href;
+  } catch {
+    return "";
+  }
+}
+
 function formatDate(value) {
   if (!value) return "—";
   const date = new Date(value);
@@ -1115,9 +1135,9 @@ function App() {
                               {complaint.description}
                             </span>
 
-                            {complaint.image_url && (
+                            {complaint.image_url && getImageUrl(complaint.image_url) && (
                               <a
-                                href={`${API_URL}${complaint.image_url}`}
+                                href={getImageUrl(complaint.image_url)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="cell-subtitle"
