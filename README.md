@@ -1,125 +1,166 @@
 # SmartCampus — Campus Complaint Management System
 
-A full-stack web application that helps students report campus issues, track complaint progress, and submit feedback while enabling administrators to manage complaints and monitor service quality.
+A full-stack web application designed to improve campus issue reporting, complaint tracking, transparency, and accountability.
+
+SmartCampus allows students to submit campus complaints, track their progress, upload supporting images, and provide feedback after resolution. Administrators can manage complaints, assign departments, update statuses, and monitor system activity.
 
 ## Features
 
-### Student
-- Secure registration and login
-- Submit complaints with title, description, category, and location
-- Upload supporting images
-- Generate unique complaint ticket IDs
-- View submitted complaints and their current status
-- Track status changes through an activity timeline
-- Submit feedback and ratings after a complaint is resolved
+### Student Features
+- User registration and login
+- JWT-based authentication
+- Submit campus complaints
+- Upload complaint images
+- Automatically generated complaint ticket IDs
+- Track complaint status
+- View complaint status history
+- Search, filter, and paginate complaints
+- Submit feedback and ratings after resolution
 
-### Administrator
-- View and manage student complaints
+### Administrator Features
+- View and manage complaints
 - Update complaint statuses
-- Access student feedback
-- View average ratings and feedback analytics
-- Monitor the distribution of ratings
+- Search and filter complaints
+- View dashboard analytics
+- Monitor feedback and ratings
+- View audit logs
+- Search and manage user accounts
+- Change user roles with administrative safeguards
+
+### Additional Features
+- Role-based access control
+- Password hashing
+- Request ID tracking
+- Structured application logging
+- API rate limiting
+- Input validation
+- Image type and size validation
+- Cloudinary image storage with local-storage fallback
+- Health-check endpoint
 
 ## Technology Stack
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React, Vite, CSS |
+| Frontend | React, Vite, JavaScript, CSS |
 | Backend | Python, FastAPI |
 | Database | MySQL |
 | ORM | SQLAlchemy |
 | Authentication | JWT |
-| API Documentation | Swagger UI |
+| Password Security | Password hashing |
+| Image Storage | Cloudinary |
+| Testing | Pytest, FastAPI TestClient |
+| Version Control | Git, GitHub |
 
-## Complaint Workflow
+## Application Architecture
 
-1. Student registers or logs in.
-2. Student submits a complaint.
-3. The system generates a ticket ID.
-4. Administrator reviews and updates the complaint.
-5. Student tracks status changes.
-6. Once resolved, the student can submit feedback.
-7. Administrators can review feedback and analytics.
-
-## Complaint Categories
-
-- Infrastructure — Maintenance Department
-- Wi-Fi — IT Department
-- Cleanliness — Housekeeping Department
-- Transport — Transport Department
+```text
+             STUDENT / ADMIN
+                    |
+                    v
+             REACT FRONTEND
+                    |
+                    v
+              FASTAPI BACKEND
+                    |
+          +---------+---------+
+          |         |         |
+          v         v         v
+       AUTH     COMPLAINTS   ADMIN
+          |         |         |
+          +---------+---------+
+                    |
+                    v
+              MYSQL DATABASE
+                    |
+                    v
+             CLOUDINARY
+           (Complaint Images)
+```
 
 ## Project Structure
 
 ```text
 SmartCampus/
-│
-├── backend/
-│   ├── main.py
-│   ├── models.py
-│   ├── schemas.py
-│   └── .env
-│
-└── frontend/
-    ├── src/
-    │   ├── App.jsx
-    │   └── App.css
-    ├── package.json
-    └── ...
+|
+|-- backend/
+|   |-- main.py
+|   |-- database.py
+|   |-- models.py
+|   |-- requirements.txt
+|   |-- tests/
+|   |-- .env.example
+|
+|-- frontend/
+|   |-- src/
+|   |-- public/
+|   |-- package.json
+|   |-- .env.example
+|
+|-- README.md
+|-- .gitignore
 ```
 
-## Run Locally
+## Local Installation and Setup
 
-### 1. Clone the repository
+### Prerequisites
+
+- Python 3.12+
+- Node.js and npm
+- MySQL Server
+- Git
+
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/dhyankn36-dotcom/SmartCampus.git
 cd SmartCampus
 ```
 
-### 2. Configure the backend
+### 2. Configure the MySQL Database
 
-Navigate to the backend folder:
+Create a database:
 
-```bash
-cd backend
+```sql
+CREATE DATABASE smartcampus_db;
 ```
 
-Create and activate a virtual environment:
+Make sure your MySQL server is running.
 
-```bash
-python -m venv .venv
-```
-
-Windows PowerShell:
+### 3. Set Up the Backend
 
 ```powershell
+cd backend
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-Install dependencies:
+Create your `.env` file using `.env.example` and configure your database credentials and JWT secret.
 
-```bash
-pip install fastapi "uvicorn[standard]" sqlalchemy pymysql python-dotenv PyJWT "pwdlib[argon2]" email-validator python-multipart
-```
+If using Cloudinary, configure its cloud name, API key, and API secret in the backend environment.
 
-Create a `.env` file in the backend folder and configure your own database credentials and JWT secret:
+Never commit your actual `.env` file or credentials.
 
-```env
-DB_USER=your_mysql_username
-DB_PASSWORD=your_mysql_password
-DB_HOST=localhost
-DB_PORT=3307
-DB_NAME=smartcampus_db
-JWT_SECRET=your_secure_secret
-```
-
-Start the backend:
+### 4. Start the Backend
 
 ```bash
 python -m uvicorn main:app --reload --port 8000
 ```
 
-### 3. Run the frontend
+Backend:
+
+`http://127.0.0.1:8000`
+
+Interactive API documentation:
+
+`http://127.0.0.1:8000/docs`
+
+Health check:
+
+`http://127.0.0.1:8000/api/health`
+
+### 5. Set Up the Frontend
 
 Open another terminal:
 
@@ -129,30 +170,75 @@ npm install
 npm run dev
 ```
 
-Open the local URL displayed by Vite in your browser.
+Open the local Vite URL displayed in your terminal, usually:
 
-## API Documentation
+`http://localhost:5173`
 
-When the backend is running, interactive API documentation is available at:
+Ensure the frontend API configuration points to the running backend at `http://127.0.0.1:8000`.
 
-`http://localhost:8000/docs`
+## Complaint Management Workflow
 
-## Security
+```text
+Student Login
+     |
+     v
+Submit Complaint
+     |
+     v
+Generate Ticket ID
+     |
+     v
+Department Assignment
+     |
+     v
+Admin Reviews Complaint
+     |
+     v
+Status Update
+     |
+     v
+Resolution
+     |
+     v
+Student Feedback
+```
 
-- Password hashing
-- JWT-based authentication
-- Role-based access control
-- Complaint ownership checks
-- Image type and file-size validation
-- Feedback submission restrictions
+### Complaint Categories
 
-## Future Improvements
+| Category | Assigned Department |
+|---|---|
+| Infrastructure | Maintenance Department |
+| Wi-Fi | IT Department |
+| Cleanliness | Housekeeping Department |
+| Transport | Transport Department |
 
-- Cloud deployment
+### Complaint Statuses
+
+- Submitted
+- In Progress
+- Resolved
+- Rejected
+
+## Testing
+
+The backend includes automated tests covering authentication, complaint management, authorization, status history, feedback, administrative operations, and other API functionality.
+
+Latest recorded test result:
+
+**77 tests passed**
+
+Run the backend tests using:
+
+```bash
+python -m pytest -v
+```
+
+## Future Enhancements
+
 - Email notifications for complaint updates
-- Advanced dashboard analytics
-- Automated testing
-- Improved mobile experience
+- More advanced dashboard analytics
+- Improved mobile responsiveness
+- Additional reporting and visualization features
 
 ## Author
 
@@ -161,6 +247,8 @@ When the backend is running, interactive API documentation is available at:
 Artificial Intelligence and Machine Learning
 
 GitHub: [dhyankn36-dotcom](https://github.com/dhyankn36-dotcom)
+
+Repository: [SmartCampus](https://github.com/dhyankn36-dotcom/SmartCampus)
 
 ---
 
