@@ -9,17 +9,65 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 # --------------------------------------------------
 
 class UserRegister(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
+    """Request body for registering a new student."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=100,
+        description="Student's full name. Maximum 100 characters.",
+        examples=["Dhyan Kumar"],
+    )
+    email: EmailStr = Field(
+        description="A valid email address.",
+        examples=["student@example.com"],
+    )
+    password: str = Field(
+        min_length=6,
+        max_length=128,
+        description="Account password. Must contain 6 to 128 characters.",
+        examples=["SecurePass123"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Dhyan Kumar",
+                    "email": "student@example.com",
+                    "password": "SecurePass123",
+                }
+            ]
+        }
+    )
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
+    """Request body for user authentication."""
+
+    email: EmailStr = Field(
+        description="Registered email address.",
+        examples=["student@example.com"],
+    )
+    password: str = Field(
+        description="Account password.",
+        examples=["SecurePass123"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "email": "student@example.com",
+                    "password": "SecurePass123",
+                }
+            ]
+        }
+    )
 
 
 class UserResponse(BaseModel):
+    """Public user profile returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -29,8 +77,15 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+    """Authentication response containing a bearer access token."""
+
+    access_token: str = Field(
+        description="JWT access token used to authenticate protected endpoints."
+    )
+    token_type: str = Field(
+        default="bearer",
+        description="Token type.",
+    )
     user: UserResponse
 
 
@@ -39,16 +94,64 @@ class TokenResponse(BaseModel):
 # --------------------------------------------------
 
 class ComplaintCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    description: str = Field(min_length=1)
-    category: str
+    """Request body for creating a campus complaint."""
+
+    title: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Short complaint title. Maximum 200 characters.",
+        examples=["Broken classroom fan"],
+    )
+    description: str = Field(
+        min_length=1,
+        description="Detailed explanation of the campus issue.",
+        examples=["The ceiling fan in classroom 204 is not working."],
+    )
+    category: str = Field(
+        description=(
+            "Complaint category: Infrastructure, Wi-Fi, "
+            "Cleanliness, or Transport."
+        ),
+        examples=["Infrastructure"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "title": "Broken classroom fan",
+                    "description": "The ceiling fan in classroom 204 is not working.",
+                    "category": "Infrastructure",
+                }
+            ]
+        }
+    )
 
 
 class ComplaintStatusUpdate(BaseModel):
-    status: str
+    """Request body for changing a complaint's status."""
+
+    status: str = Field(
+        description=(
+            "New status: Submitted, In Progress, Resolved, or Rejected."
+        ),
+        examples=["In Progress"],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "In Progress"
+                }
+            ]
+        }
+    )
 
 
 class ComplaintResponse(BaseModel):
+    """Complaint details returned by the API."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -70,6 +173,8 @@ class ComplaintResponse(BaseModel):
 # --------------------------------------------------
 
 class StatusHistoryResponse(BaseModel):
+    """A single complaint status-history entry."""
+
     id: int
     complaint_id: int
     old_status: str | None = None
@@ -84,11 +189,36 @@ class StatusHistoryResponse(BaseModel):
 # --------------------------------------------------
 
 class FeedbackCreate(BaseModel):
-    feedback: str = Field(min_length=1, max_length=1000)
-    rating: int = Field(ge=1, le=5)
+    """Request body for submitting feedback after resolution."""
+
+    feedback: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Written feedback. Maximum 1000 characters.",
+        examples=["The issue was resolved quickly. Thank you."],
+    )
+    rating: int = Field(
+        ge=1,
+        le=5,
+        description="Rating from 1 (lowest) to 5 (highest).",
+        examples=[5],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "feedback": "The issue was resolved quickly. Thank you.",
+                    "rating": 5,
+                }
+            ]
+        }
+    )
 
 
 class FeedbackResponse(BaseModel):
+    """Student feedback details returned to administrators."""
+
     complaint_id: int
     ticket_id: str
     title: str
@@ -99,6 +229,8 @@ class FeedbackResponse(BaseModel):
 
 
 class FeedbackAnalytics(BaseModel):
+    """Aggregated student feedback statistics."""
+
     total_feedback: int
     average_rating: float
     rating_distribution: dict[int, int]

@@ -14,11 +14,20 @@ from threading import Lock
 
 import jwt
 from pwdlib import PasswordHash
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -41,7 +50,7 @@ from schemas import (
 
 
 # --------------------------------------------------
-# STRUCTURED LOGGING CONFIGURATION
+# STRUCTURED LOGGING
 # --------------------------------------------------
 
 class JSONFormatter(logging.Formatter):
@@ -60,6 +69,11 @@ class JSONFormatter(logging.Formatter):
             "path",
             "status_code",
             "duration_ms",
+            "user_id",
+            "complaint_id",
+            "old_status",
+            "new_status",
+            "rating",
         ]
 
         for field in optional_fields:
@@ -76,9 +90,7 @@ class JSONFormatter(logging.Formatter):
 
 
 logger = logging.getLogger("smartcampus")
-logger.setLevel(
-    os.getenv("LOG_LEVEL", "INFO").upper()
-)
+logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 logger.propagate = False
 
 if not logger.handlers:
@@ -100,15 +112,163 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_MINUTES = 60
 
 password_hash = PasswordHash.recommended()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    description=(
+        "Enter the access token returned by POST /api/auth/login. "
+        "Enter the token only, without adding the Bearer prefix."
+    ),
+)
 
 Base.metadata.create_all(bind=engine)
 
+
+# --------------------------------------------------
+# API DOCUMENTATION CONFIGURATION
+# --------------------------------------------------
+
+API_TAGS = [
+    {
+        "name": "General",
+        "description": "API availability and health-check endpoints.",
+    },
+    {
+        "name": "Authentication",
+        "description": (
+            "Student registration, login, JWT authentication, "
+            "and current-user profile."
+        ),
+    },
+    {
+        "name": "Complaints",
+        "description": (
+            "Create, search, filter, paginate, and view campus complaints."
+        ),
+    },
+    {
+        "name": "Complaint Management",
+        "description": (
+            "Administrator operations for updating complaint status."
+        ),
+    },
+    {
+        "name": "Status History",
+        "description": (
+            "View the chronological status history of complaints."
+        ),
+    },
+    {
+        "name": "Image Uploads",
+        "description": (
+            "Upload supporting JPG, PNG, or WEBP images to complaints. "
+            "Maximum file size: 5 MB."
+        ),
+    },
+    {
+        "name": "Student Feedback",
+        "description": (
+            "Submit feedback and a rating after a complaint is resolved."
+        ),
+    },
+    {
+        "name": "Admin Feedback",
+        "description": (
+            "Administrator access to submitted student feedback."
+        ),
+    },
+    {
+        "name": "Admin Analytics",
+        "description": (
+            "Administrator complaint and feedback analytics."
+        ),
+    },
+]
+
 app = FastAPI(
     title="SmartCampus Complaint Management System",
-    description="API for campus complaints, grievances and student feedback",
-    version="4.2.0",
+    summary="Campus complaint and grievance management API",
+    description="""
+# SmartCampus API
+
+SmartCampus provides a platform for students to report campus issues
+and for administrators to manage and resolve complaints.
+
+## Main capabilities
+
+- Student registration and JWT authentication
+- Complaint creation and tracking
+- Automatic department assignment
+- Complaint search, filtering, and pagination
+- Supporting image uploads
+- Administrator complaint status management
+- Complaint status history
+- Student feedback and ratings
+- Administrator feedback analytics
+- Request tracking and rate limiting
+
+## Authentication
+
+1. Register using `POST /api/auth/register`.
+2. Log in using `POST /api/auth/login`.
+3. Copy the `access_token` from the response.
+4. Select **Authorize** and paste the token.
+5. Use the protected endpoints.
+
+The login endpoint accepts JSON credentials and returns a bearer token.
+
+## User roles
+
+**Student**
+- Create complaints.
+- View their own complaints.
+- Upload images to their own complaints.
+- View their complaint history.
+- Submit feedback after resolution.
+
+**Administrator**
+- View all complaints.
+- Update complaint statuses.
+- View complaint history.
+- Access student feedback.
+- View analytics.
+
+## Complaint categories
+
+| Category | Assigned department |
+|---|---|
+| Infrastructure | Maintenance Department |
+| Wi-Fi | IT Department |
+| Cleanliness | Housekeeping Department |
+| Transport | Transport Department |
+
+## Complaint statuses
+
+- Submitted
+- In Progress
+- Resolved
+- Rejected
+
+## General notes
+
+- Protected endpoints require a valid bearer token.
+- Timestamps are returned in ISO 8601 format.
+- Complaint image uploads are limited to 5 MB.
+- Feedback ratings range from 1 to 5.
+- API errors contain a `detail` field explaining the issue.
+""",
+    version="4.3.0",
+    openapi_tags=API_TAGS,
+    contact={
+        "name": "SmartCampus API Support",
+    },
 )
+
+
+# --------------------------------------------------
+# FILE STORAGE
+# --------------------------------------------------
 
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -121,7 +281,11 @@ ALLOWED_IMAGE_TYPES = {
     "image/webp": ".webp",
 }
 
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount(
+    "/uploads",
+    StaticFiles(directory=str(UPLOAD_DIR)),
+    name="uploads",
+)
 
 
 # --------------------------------------------------
@@ -206,7 +370,7 @@ def check_rate_limit(group: str, client_ip: str):
 
 
 # --------------------------------------------------
-# REQUEST LOGGING AND RATE-LIMITING MIDDLEWARE
+# REQUEST LOGGING AND RATE LIMITING MIDDLEWARE
 # --------------------------------------------------
 
 @app.middleware("http")
@@ -254,7 +418,7 @@ async def request_logging_and_rate_limit_middleware(
                 },
             )
 
-            response = JSONResponse(
+            return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={
                     "detail": "Too many requests. Please try again later."
@@ -264,8 +428,6 @@ async def request_logging_and_rate_limit_middleware(
                     "X-Request-ID": request_id,
                 },
             )
-
-            return response
 
     try:
         response = await call_next(request)
@@ -382,7 +544,9 @@ def create_access_token(user: User) -> str:
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        bearer_scheme
+    ),
     db: Session = Depends(get_db),
 ) -> User:
     unauthorized = HTTPException(
@@ -391,9 +555,12 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    if credentials is None:
+        raise unauthorized
+
     try:
         payload = jwt.decode(
-            token,
+            credentials.credentials,
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
         )
@@ -430,14 +597,24 @@ def require_admin(
 # GENERAL ENDPOINTS
 # --------------------------------------------------
 
-@app.get("/")
+@app.get(
+    "/",
+    tags=["General"],
+    summary="API welcome message",
+    description="Returns a welcome message confirming that the API is reachable.",
+)
 def home():
     return {
         "message": "Welcome to SmartCampus Complaint Management API"
     }
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    tags=["General"],
+    summary="Check API health",
+    description="Returns the current health status of the API.",
+)
 def health_check():
     return {"status": "healthy"}
 
@@ -450,6 +627,18 @@ def health_check():
     "/api/auth/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Authentication"],
+    summary="Register a student account",
+    description=(
+        "Creates a new student account. New registrations are assigned "
+        "the student role automatically. Duplicate email addresses are rejected."
+    ),
+    responses={
+        201: {"description": "Student account created successfully."},
+        409: {"description": "An account with this email already exists."},
+        422: {"description": "Request validation failed."},
+        429: {"description": "Registration rate limit exceeded."},
+    },
 )
 def register_user(
     user_data: UserRegister,
@@ -504,6 +693,18 @@ def register_user(
 @app.post(
     "/api/auth/login",
     response_model=TokenResponse,
+    tags=["Authentication"],
+    summary="Log in and receive an access token",
+    description=(
+        "Authenticates a user using email and password. "
+        "Returns a JWT bearer token that must be supplied to protected endpoints."
+    ),
+    responses={
+        200: {"description": "Login successful. Returns a JWT access token."},
+        401: {"description": "Incorrect email or password."},
+        422: {"description": "Request validation failed."},
+        429: {"description": "Login rate limit exceeded."},
+    },
 )
 def login_user(
     login_data: UserLogin,
@@ -553,6 +754,13 @@ def login_user(
 @app.get(
     "/api/auth/me",
     response_model=UserResponse,
+    tags=["Authentication"],
+    summary="Get the current user's profile",
+    description="Returns the profile of the user authenticated by the bearer token.",
+    responses={
+        200: {"description": "Current user profile returned."},
+        401: {"description": "Missing, invalid, or expired access token."},
+    },
 )
 def read_current_user(
     current_user: User = Depends(get_current_user),
@@ -568,6 +776,20 @@ def read_current_user(
     "/api/complaints",
     response_model=ComplaintResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Complaints"],
+    summary="Create a campus complaint",
+    description=(
+        "Creates a complaint for the authenticated student. "
+        "The department is assigned automatically based on the category. "
+        "An initial Submitted status-history entry is also created."
+    ),
+    responses={
+        201: {"description": "Complaint created successfully."},
+        400: {"description": "Invalid complaint category."},
+        401: {"description": "Authentication required."},
+        429: {"description": "Complaint creation rate limit exceeded."},
+        422: {"description": "Request validation failed."},
+    },
 )
 def create_complaint(
     complaint_data: ComplaintCreate,
@@ -639,12 +861,25 @@ def create_complaint(
 
 
 # --------------------------------------------------
-# LIST COMPLAINTS
+# LIST, SEARCH, FILTER, AND PAGINATE COMPLAINTS
 # --------------------------------------------------
 
 @app.get(
     "/api/complaints",
     response_model=list[ComplaintResponse],
+    tags=["Complaints"],
+    summary="List and search complaints",
+    description=(
+        "Returns complaints accessible to the authenticated user. "
+        "Students only see their own complaints; administrators can see all. "
+        "Supports search, status filtering, category filtering, and pagination."
+    ),
+    responses={
+        200: {"description": "Complaint list returned successfully."},
+        400: {"description": "Invalid status or category filter."},
+        401: {"description": "Authentication required."},
+        422: {"description": "Invalid query parameters."},
+    },
 )
 def list_complaints(
     search: str | None = Query(
@@ -652,19 +887,31 @@ def list_complaints(
         min_length=1,
         max_length=100,
         description="Search by ticket ID, title, or description.",
+        examples=["broken fan"],
     ),
     status_filter: str | None = Query(
         default=None,
         alias="status",
-        description="Filter by complaint status.",
+        description="Filter by status: Submitted, In Progress, Resolved, or Rejected.",
+        examples=["Submitted"],
     ),
     category: str | None = Query(
         default=None,
         max_length=50,
-        description="Filter by complaint category.",
+        description="Filter by category: Infrastructure, Wi-Fi, Cleanliness, or Transport.",
+        examples=["Infrastructure"],
     ),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=1, le=100),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number, starting from 1.",
+    ),
+    page_size: int = Query(
+        default=100,
+        ge=1,
+        le=100,
+        description="Number of complaints per page. Maximum: 100.",
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -716,6 +963,17 @@ def list_complaints(
 @app.get(
     "/api/complaints/{complaint_id}",
     response_model=ComplaintResponse,
+    tags=["Complaints"],
+    summary="Get a complaint by ID",
+    description=(
+        "Returns one complaint. Students can access their own complaints; "
+        "administrators can access any complaint."
+    ),
+    responses={
+        200: {"description": "Complaint returned successfully."},
+        401: {"description": "Authentication required."},
+        404: {"description": "Complaint not found or not accessible."},
+    },
 )
 def get_complaint(
     complaint_id: int,
@@ -746,7 +1004,22 @@ def get_complaint(
 # UPDATE COMPLAINT STATUS
 # --------------------------------------------------
 
-@app.patch("/api/complaints/{complaint_id}/status")
+@app.patch(
+    "/api/complaints/{complaint_id}/status",
+    tags=["Complaint Management"],
+    summary="Update complaint status",
+    description=(
+        "Administrator-only endpoint. Changes the complaint status "
+        "and records the previous and new statuses in the history."
+    ),
+    responses={
+        200: {"description": "Complaint status updated successfully."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Administrator access required."},
+        404: {"description": "Complaint not found."},
+        422: {"description": "Request validation failed."},
+    },
+)
 def update_complaint_status(
     complaint_id: int,
     update_data: ComplaintStatusUpdate,
@@ -835,6 +1108,18 @@ def update_complaint_status(
 @app.get(
     "/api/complaints/{complaint_id}/history",
     response_model=list[StatusHistoryResponse],
+    tags=["Status History"],
+    summary="Get complaint status history",
+    description=(
+        "Returns the chronological status history for a complaint. "
+        "Students can view their own history; administrators can view all."
+    ),
+    responses={
+        200: {"description": "Status history returned successfully."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Access to this complaint history is forbidden."},
+        404: {"description": "Complaint not found."},
+    },
 )
 def get_complaint_history(
     complaint_id: int,
@@ -863,7 +1148,10 @@ def get_complaint_history(
     history_entries = (
         db.query(StatusHistory)
         .filter(StatusHistory.complaint_id == complaint_id)
-        .order_by(StatusHistory.changed_at.asc(), StatusHistory.id.asc())
+        .order_by(
+            StatusHistory.changed_at.asc(),
+            StatusHistory.id.asc(),
+        )
         .all()
     )
 
@@ -889,10 +1177,32 @@ def get_complaint_history(
 # UPLOAD COMPLAINT IMAGE
 # --------------------------------------------------
 
-@app.post("/api/complaints/{complaint_id}/image")
+@app.post(
+    "/api/complaints/{complaint_id}/image",
+    tags=["Image Uploads"],
+    summary="Upload a complaint image",
+    description=(
+        "Uploads a supporting JPG, PNG, or WEBP image. "
+        "Maximum file size is 5 MB. Students can upload to their own "
+        "complaints; administrators can upload to any complaint."
+    ),
+    responses={
+        200: {"description": "Image uploaded successfully."},
+        400: {"description": "Empty file or invalid image contents."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Not allowed to upload to this complaint."},
+        404: {"description": "Complaint not found."},
+        413: {"description": "Image exceeds the 5 MB limit."},
+        415: {"description": "Unsupported image type."},
+        429: {"description": "Image upload rate limit exceeded."},
+    },
+)
 async def upload_complaint_image(
     complaint_id: int,
-    file: UploadFile = File(...),
+    file: UploadFile = File(
+        ...,
+        description="JPG, PNG, or WEBP image. Maximum size: 5 MB.",
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -935,8 +1245,16 @@ async def upload_complaint_image(
         )
 
     valid_signature = (
-        (extension == ".jpg" and contents.startswith(bytes.fromhex("FFD8FF")))
-        or (extension == ".png" and contents.startswith(bytes.fromhex("89504E470D0A1A0A")))
+        (
+            extension == ".jpg"
+            and contents.startswith(bytes.fromhex("FFD8FF"))
+        )
+        or (
+            extension == ".png"
+            and contents.startswith(
+                bytes.fromhex("89504E470D0A1A0A")
+            )
+        )
         or (
             extension == ".webp"
             and len(contents) >= 12
@@ -1011,7 +1329,26 @@ async def upload_complaint_image(
 # STUDENT FEEDBACK
 # --------------------------------------------------
 
-@app.post("/api/complaints/{complaint_id}/feedback")
+@app.post(
+    "/api/complaints/{complaint_id}/feedback",
+    tags=["Student Feedback"],
+    summary="Submit complaint feedback",
+    description=(
+        "Allows a student to submit written feedback and a rating "
+        "from 1 to 5 after their complaint has been resolved. "
+        "Feedback can only be submitted once."
+    ),
+    responses={
+        200: {"description": "Feedback submitted successfully."},
+        400: {"description": "Complaint is not resolved or feedback is invalid."},
+        401: {"description": "Authentication required."},
+        403: {"description": "This complaint belongs to another student."},
+        404: {"description": "Complaint not found."},
+        409: {"description": "Feedback has already been submitted."},
+        422: {"description": "Request validation failed."},
+        429: {"description": "Feedback submission rate limit exceeded."},
+    },
+)
 def submit_feedback(
     complaint_id: int,
     feedback_data: FeedbackCreate,
@@ -1103,6 +1440,17 @@ def submit_feedback(
 @app.get(
     "/api/admin/feedback",
     response_model=list[FeedbackResponse],
+    tags=["Admin Feedback"],
+    summary="View all submitted student feedback",
+    description=(
+        "Administrator-only endpoint. Returns submitted feedback, "
+        "ratings, complaint details, submission timestamps, and student names."
+    ),
+    responses={
+        200: {"description": "Feedback list returned successfully."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Administrator access required."},
+    },
 )
 def get_all_feedback(
     current_user: User = Depends(require_admin),
@@ -1143,6 +1491,17 @@ def get_all_feedback(
 @app.get(
     "/api/admin/feedback/analytics",
     response_model=FeedbackAnalytics,
+    tags=["Admin Analytics"],
+    summary="Get student feedback analytics",
+    description=(
+        "Administrator-only endpoint. Returns the number of feedback "
+        "submissions, average rating, and distribution of ratings from 1 to 5."
+    ),
+    responses={
+        200: {"description": "Feedback analytics returned successfully."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Administrator access required."},
+    },
 )
 def get_feedback_analytics(
     current_user: User = Depends(require_admin),
