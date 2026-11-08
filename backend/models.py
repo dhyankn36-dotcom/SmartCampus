@@ -6,6 +6,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -75,6 +76,11 @@ class Complaint(Base):
         order_by="StatusHistory.changed_at"
     )
 
+    audit_logs = relationship(
+        "AuditLog",
+        back_populates="complaint"
+    )
+
 
 # --------------------------------------------------
 # USER MODEL
@@ -118,6 +124,12 @@ class User(Base):
         "StatusHistory",
         back_populates="changed_by",
         foreign_keys="StatusHistory.changed_by_user_id"
+    )
+
+    audit_logs = relationship(
+        "AuditLog",
+        back_populates="actor",
+        foreign_keys="AuditLog.actor_user_id"
     )
 
 
@@ -169,4 +181,76 @@ class StatusHistory(Base):
         "User",
         back_populates="status_changes",
         foreign_keys=[changed_by_user_id]
+    )
+
+
+# --------------------------------------------------
+# ADMIN AUDIT LOG MODEL
+# --------------------------------------------------
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    # Snapshot retained even if the admin account is deleted.
+    actor_name = Column(
+        String(100),
+        nullable=False
+    )
+
+    complaint_id = Column(
+        Integer,
+        ForeignKey("complaints.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    action = Column(
+        String(100),
+        nullable=False,
+        index=True
+    )
+
+    old_value = Column(
+        Text,
+        nullable=True
+    )
+
+    new_value = Column(
+        Text,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True
+    )
+
+    actor = relationship(
+        "User",
+        back_populates="audit_logs",
+        foreign_keys=[actor_user_id]
+    )
+
+    complaint = relationship(
+        "Complaint",
+        back_populates="audit_logs"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_audit_logs_complaint_action",
+            "complaint_id",
+            "action"
+        ),
     )

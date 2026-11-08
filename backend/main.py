@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, engine, get_db
-from models import Complaint, User, StatusHistory
+from models import Complaint, User, StatusHistory, AuditLog
 from schemas import (
     ComplaintCreate,
     ComplaintResponse,
@@ -46,6 +46,7 @@ from schemas import (
     FeedbackCreate,
     FeedbackResponse,
     FeedbackAnalytics,
+    AuditLogResponse,
 )
 
 
@@ -74,6 +75,7 @@ class JSONFormatter(logging.Formatter):
             "old_status",
             "new_status",
             "rating",
+            "action",
         ]
 
         for field in optional_fields:
@@ -122,6 +124,7 @@ bearer_scheme = HTTPBearer(
     ),
 )
 
+# Creates newly added tables without dropping existing data.
 Base.metadata.create_all(bind=engine)
 
 
@@ -136,52 +139,41 @@ API_TAGS = [
     },
     {
         "name": "Authentication",
-        "description": (
-            "Student registration, login, JWT authentication, "
-            "and current-user profile."
-        ),
+        "description": "Registration, login, JWT authentication, and profiles.",
     },
     {
         "name": "Complaints",
-        "description": (
-            "Create, search, filter, paginate, and view campus complaints."
-        ),
+        "description": "Create, search, filter, paginate, and view complaints.",
     },
     {
         "name": "Complaint Management",
-        "description": (
-            "Administrator operations for updating complaint status."
-        ),
+        "description": "Administrator operations for complaint status.",
     },
     {
         "name": "Status History",
-        "description": (
-            "View the chronological status history of complaints."
-        ),
+        "description": "Chronological history of complaint status changes.",
     },
     {
         "name": "Image Uploads",
-        "description": (
-            "Upload supporting JPG, PNG, or WEBP images to complaints. "
-            "Maximum file size: 5 MB."
-        ),
+        "description": "Upload supporting JPG, PNG, or WEBP images.",
     },
     {
         "name": "Student Feedback",
-        "description": (
-            "Submit feedback and a rating after a complaint is resolved."
-        ),
+        "description": "Submit feedback and ratings after resolution.",
     },
     {
         "name": "Admin Feedback",
-        "description": (
-            "Administrator access to submitted student feedback."
-        ),
+        "description": "Administrator access to student feedback.",
     },
     {
         "name": "Admin Analytics",
+        "description": "Administrator feedback analytics.",
+    },
+    {
+        "name": "Admin Audit Logs",
         "description": (
-            "Administrator complaint and feedback analytics."
+            "Administrator-only records of actions performed "
+            "on campus complaints."
         ),
     },
 ]
@@ -192,8 +184,8 @@ app = FastAPI(
     description="""
 # SmartCampus API
 
-SmartCampus provides a platform for students to report campus issues
-and for administrators to manage and resolve complaints.
+SmartCampus allows students to report campus issues and administrators
+to manage and resolve complaints.
 
 ## Main capabilities
 
@@ -206,6 +198,7 @@ and for administrators to manage and resolve complaints.
 - Complaint status history
 - Student feedback and ratings
 - Administrator feedback analytics
+- Administrative audit logs
 - Request tracking and rate limiting
 
 ## Authentication
@@ -213,10 +206,8 @@ and for administrators to manage and resolve complaints.
 1. Register using `POST /api/auth/register`.
 2. Log in using `POST /api/auth/login`.
 3. Copy the `access_token` from the response.
-4. Select **Authorize** and paste the token.
+4. Select **Authorize** and enter the token.
 5. Use the protected endpoints.
-
-The login endpoint accepts JSON credentials and returns a bearer token.
 
 ## User roles
 
@@ -233,6 +224,7 @@ The login endpoint accepts JSON credentials and returns a bearer token.
 - View complaint history.
 - Access student feedback.
 - View analytics.
+- View administrative audit logs.
 
 ## Complaint categories
 
@@ -250,19 +242,15 @@ The login endpoint accepts JSON credentials and returns a bearer token.
 - Resolved
 - Rejected
 
-## General notes
+## Audit logs
 
-- Protected endpoints require a valid bearer token.
-- Timestamps are returned in ISO 8601 format.
-- Complaint image uploads are limited to 5 MB.
-- Feedback ratings range from 1 to 5.
-- API errors contain a `detail` field explaining the issue.
+Successful administrator complaint-status changes are recorded with
+the administrator, complaint, previous status, new status, and timestamp.
+Only administrators can view these records.
 """,
-    version="4.3.0",
+    version="4.4.0",
     openapi_tags=API_TAGS,
-    contact={
-        "name": "SmartCampus API Support",
-    },
+    contact={"name": "SmartCampus API Support"},
 )
 
 
@@ -463,7 +451,6 @@ async def request_logging_and_rate_limit_middleware(
             )
 
         response.headers["X-Request-ID"] = request_id
-
         return response
 
     except Exception:
@@ -483,7 +470,6 @@ async def request_logging_and_rate_limit_middleware(
                 "duration_ms": duration_ms,
             },
         )
-
         raise
 
 
@@ -597,24 +583,14 @@ def require_admin(
 # GENERAL ENDPOINTS
 # --------------------------------------------------
 
-@app.get(
-    "/",
-    tags=["General"],
-    summary="API welcome message",
-    description="Returns a welcome message confirming that the API is reachable.",
-)
+@app.get("/", tags=["General"], summary="API welcome message")
 def home():
     return {
         "message": "Welcome to SmartCampus Complaint Management API"
     }
 
 
-@app.get(
-    "/api/health",
-    tags=["General"],
-    summary="Check API health",
-    description="Returns the current health status of the API.",
-)
+@app.get("/api/health", tags=["General"], summary="Check API health")
 def health_check():
     return {"status": "healthy"}
 
@@ -629,14 +605,9 @@ def health_check():
     status_code=status.HTTP_201_CREATED,
     tags=["Authentication"],
     summary="Register a student account",
-    description=(
-        "Creates a new student account. New registrations are assigned "
-        "the student role automatically. Duplicate email addresses are rejected."
-    ),
+    description="Creates a new student account. New registrations receive the student role.",
     responses={
-        201: {"description": "Student account created successfully."},
         409: {"description": "An account with this email already exists."},
-        422: {"description": "Request validation failed."},
         429: {"description": "Registration rate limit exceeded."},
     },
 )
@@ -664,7 +635,6 @@ def register_user(
                 "user_id": user.id,
             },
         )
-
         return user
 
     except IntegrityError:
@@ -695,23 +665,12 @@ def register_user(
     response_model=TokenResponse,
     tags=["Authentication"],
     summary="Log in and receive an access token",
-    description=(
-        "Authenticates a user using email and password. "
-        "Returns a JWT bearer token that must be supplied to protected endpoints."
-    ),
-    responses={
-        200: {"description": "Login successful. Returns a JWT access token."},
-        401: {"description": "Incorrect email or password."},
-        422: {"description": "Request validation failed."},
-        429: {"description": "Login rate limit exceeded."},
-    },
 )
 def login_user(
     login_data: UserLogin,
     db: Session = Depends(get_db),
 ):
     email = str(login_data.email).lower()
-
     user = db.query(User).filter(User.email == email).first()
 
     if (
@@ -725,7 +684,6 @@ def login_user(
             "Authentication attempt failed",
             extra={"event": "login_failed"},
         )
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
@@ -756,11 +714,6 @@ def login_user(
     response_model=UserResponse,
     tags=["Authentication"],
     summary="Get the current user's profile",
-    description="Returns the profile of the user authenticated by the bearer token.",
-    responses={
-        200: {"description": "Current user profile returned."},
-        401: {"description": "Missing, invalid, or expired access token."},
-    },
 )
 def read_current_user(
     current_user: User = Depends(get_current_user),
@@ -778,18 +731,6 @@ def read_current_user(
     status_code=status.HTTP_201_CREATED,
     tags=["Complaints"],
     summary="Create a campus complaint",
-    description=(
-        "Creates a complaint for the authenticated student. "
-        "The department is assigned automatically based on the category. "
-        "An initial Submitted status-history entry is also created."
-    ),
-    responses={
-        201: {"description": "Complaint created successfully."},
-        400: {"description": "Invalid complaint category."},
-        401: {"description": "Authentication required."},
-        429: {"description": "Complaint creation rate limit exceeded."},
-        422: {"description": "Request validation failed."},
-    },
 )
 def create_complaint(
     complaint_data: ComplaintCreate,
@@ -822,14 +763,14 @@ def create_complaint(
             f"CMP-{datetime.now().year}-{complaint.id:03d}"
         )
 
-        initial_history = StatusHistory(
-            complaint_id=complaint.id,
-            old_status=None,
-            new_status="Submitted",
-            changed_by_user_id=current_user.id,
+        db.add(
+            StatusHistory(
+                complaint_id=complaint.id,
+                old_status=None,
+                new_status="Submitted",
+                changed_by_user_id=current_user.id,
+            )
         )
-
-        db.add(initial_history)
 
         db.commit()
         db.refresh(complaint)
@@ -842,7 +783,6 @@ def create_complaint(
                 "complaint_id": complaint.id,
             },
         )
-
         return complaint
 
     except Exception:
@@ -869,17 +809,6 @@ def create_complaint(
     response_model=list[ComplaintResponse],
     tags=["Complaints"],
     summary="List and search complaints",
-    description=(
-        "Returns complaints accessible to the authenticated user. "
-        "Students only see their own complaints; administrators can see all. "
-        "Supports search, status filtering, category filtering, and pagination."
-    ),
-    responses={
-        200: {"description": "Complaint list returned successfully."},
-        400: {"description": "Invalid status or category filter."},
-        401: {"description": "Authentication required."},
-        422: {"description": "Invalid query parameters."},
-    },
 )
 def list_complaints(
     search: str | None = Query(
@@ -892,26 +821,15 @@ def list_complaints(
     status_filter: str | None = Query(
         default=None,
         alias="status",
-        description="Filter by status: Submitted, In Progress, Resolved, or Rejected.",
-        examples=["Submitted"],
+        description="Filter by complaint status.",
     ),
     category: str | None = Query(
         default=None,
         max_length=50,
-        description="Filter by category: Infrastructure, Wi-Fi, Cleanliness, or Transport.",
-        examples=["Infrastructure"],
+        description="Filter by complaint category.",
     ),
-    page: int = Query(
-        default=1,
-        ge=1,
-        description="Page number, starting from 1.",
-    ),
-    page_size: int = Query(
-        default=100,
-        ge=1,
-        le=100,
-        description="Number of complaints per page. Maximum: 100.",
-    ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -946,11 +864,9 @@ def list_complaints(
             )
         query = query.filter(Complaint.category == category)
 
-    offset = (page - 1) * page_size
-
     return (
         query.order_by(Complaint.id.desc())
-        .offset(offset)
+        .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
@@ -965,15 +881,6 @@ def list_complaints(
     response_model=ComplaintResponse,
     tags=["Complaints"],
     summary="Get a complaint by ID",
-    description=(
-        "Returns one complaint. Students can access their own complaints; "
-        "administrators can access any complaint."
-    ),
-    responses={
-        200: {"description": "Complaint returned successfully."},
-        401: {"description": "Authentication required."},
-        404: {"description": "Complaint not found or not accessible."},
-    },
 )
 def get_complaint(
     complaint_id: int,
@@ -1001,7 +908,7 @@ def get_complaint(
 
 
 # --------------------------------------------------
-# UPDATE COMPLAINT STATUS
+# UPDATE COMPLAINT STATUS + CREATE AUDIT LOG
 # --------------------------------------------------
 
 @app.patch(
@@ -1009,15 +916,13 @@ def get_complaint(
     tags=["Complaint Management"],
     summary="Update complaint status",
     description=(
-        "Administrator-only endpoint. Changes the complaint status "
-        "and records the previous and new statuses in the history."
+        "Administrator-only endpoint. Updates complaint status, "
+        "records status history, and creates an audit log in the "
+        "same database transaction."
     ),
     responses={
-        200: {"description": "Complaint status updated successfully."},
-        401: {"description": "Authentication required."},
         403: {"description": "Administrator access required."},
         404: {"description": "Complaint not found."},
-        422: {"description": "Request validation failed."},
     },
 )
 def update_complaint_status(
@@ -1057,25 +962,38 @@ def update_complaint_status(
     try:
         complaint.status = update_data.status
 
-        history_entry = StatusHistory(
-            complaint_id=complaint.id,
-            old_status=old_status,
-            new_status=update_data.status,
-            changed_by_user_id=current_user.id,
+        db.add(
+            StatusHistory(
+                complaint_id=complaint.id,
+                old_status=old_status,
+                new_status=update_data.status,
+                changed_by_user_id=current_user.id,
+            )
         )
 
-        db.add(history_entry)
+        db.add(
+            AuditLog(
+                actor_user_id=current_user.id,
+                actor_name=current_user.name,
+                complaint_id=complaint.id,
+                action="complaint_status_updated",
+                old_value=old_status,
+                new_value=update_data.status,
+            )
+        )
+
         db.commit()
         db.refresh(complaint)
 
         logger.info(
-            "Complaint status changed",
+            "Complaint status changed and audit log created",
             extra={
                 "event": "complaint_status_changed",
                 "user_id": current_user.id,
                 "complaint_id": complaint.id,
                 "old_status": old_status,
                 "new_status": complaint.status,
+                "action": "complaint_status_updated",
             },
         )
 
@@ -1110,16 +1028,6 @@ def update_complaint_status(
     response_model=list[StatusHistoryResponse],
     tags=["Status History"],
     summary="Get complaint status history",
-    description=(
-        "Returns the chronological status history for a complaint. "
-        "Students can view their own history; administrators can view all."
-    ),
-    responses={
-        200: {"description": "Status history returned successfully."},
-        401: {"description": "Authentication required."},
-        403: {"description": "Access to this complaint history is forbidden."},
-        404: {"description": "Complaint not found."},
-    },
 )
 def get_complaint_history(
     complaint_id: int,
@@ -1145,7 +1053,7 @@ def get_complaint_history(
             detail="You can only view the history of your own complaints.",
         )
 
-    history_entries = (
+    entries = (
         db.query(StatusHistory)
         .filter(StatusHistory.complaint_id == complaint_id)
         .order_by(
@@ -1169,8 +1077,78 @@ def get_complaint_history(
             ),
             "changed_at": entry.changed_at,
         }
-        for entry in history_entries
+        for entry in entries
     ]
+
+
+# --------------------------------------------------
+# ADMIN: VIEW AUDIT LOGS
+# --------------------------------------------------
+
+@app.get(
+    "/api/admin/audit-logs",
+    response_model=list[AuditLogResponse],
+    tags=["Admin Audit Logs"],
+    summary="View administrative audit logs",
+    description=(
+        "Administrator-only endpoint. Returns recorded administrative "
+        "actions, newest first. Supports complaint and action filters "
+        "and pagination."
+    ),
+    responses={
+        200: {"description": "Audit logs returned successfully."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Administrator access required."},
+    },
+)
+def get_audit_logs(
+    complaint_id: int | None = Query(
+        default=None,
+        ge=1,
+        description="Optionally filter logs by complaint ID.",
+    ),
+    action: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Optionally filter by action name.",
+        examples=["complaint_status_updated"],
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number, starting from 1.",
+    ),
+    page_size: int = Query(
+        default=50,
+        ge=1,
+        le=100,
+        description="Number of records per page. Maximum: 100.",
+    ),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(AuditLog)
+
+    if complaint_id is not None:
+        query = query.filter(
+            AuditLog.complaint_id == complaint_id
+        )
+
+    if action:
+        query = query.filter(
+            AuditLog.action == action.strip()
+        )
+
+    return (
+        query.order_by(
+            AuditLog.created_at.desc(),
+            AuditLog.id.desc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
 
 
 # --------------------------------------------------
@@ -1181,21 +1159,6 @@ def get_complaint_history(
     "/api/complaints/{complaint_id}/image",
     tags=["Image Uploads"],
     summary="Upload a complaint image",
-    description=(
-        "Uploads a supporting JPG, PNG, or WEBP image. "
-        "Maximum file size is 5 MB. Students can upload to their own "
-        "complaints; administrators can upload to any complaint."
-    ),
-    responses={
-        200: {"description": "Image uploaded successfully."},
-        400: {"description": "Empty file or invalid image contents."},
-        401: {"description": "Authentication required."},
-        403: {"description": "Not allowed to upload to this complaint."},
-        404: {"description": "Complaint not found."},
-        413: {"description": "Image exceeds the 5 MB limit."},
-        415: {"description": "Unsupported image type."},
-        429: {"description": "Image upload rate limit exceeded."},
-    },
 )
 async def upload_complaint_image(
     complaint_id: int,
@@ -1240,7 +1203,7 @@ async def upload_complaint_image(
 
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="Image must be 5 MB or smaller.",
         )
 
@@ -1333,21 +1296,6 @@ async def upload_complaint_image(
     "/api/complaints/{complaint_id}/feedback",
     tags=["Student Feedback"],
     summary="Submit complaint feedback",
-    description=(
-        "Allows a student to submit written feedback and a rating "
-        "from 1 to 5 after their complaint has been resolved. "
-        "Feedback can only be submitted once."
-    ),
-    responses={
-        200: {"description": "Feedback submitted successfully."},
-        400: {"description": "Complaint is not resolved or feedback is invalid."},
-        401: {"description": "Authentication required."},
-        403: {"description": "This complaint belongs to another student."},
-        404: {"description": "Complaint not found."},
-        409: {"description": "Feedback has already been submitted."},
-        422: {"description": "Request validation failed."},
-        429: {"description": "Feedback submission rate limit exceeded."},
-    },
 )
 def submit_feedback(
     complaint_id: int,
@@ -1418,7 +1366,6 @@ def submit_feedback(
 
     except Exception:
         db.rollback()
-
         logger.exception(
             "Feedback submission failed",
             extra={
@@ -1426,7 +1373,6 @@ def submit_feedback(
                 "complaint_id": complaint_id,
             },
         )
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not submit feedback.",
@@ -1442,15 +1388,6 @@ def submit_feedback(
     response_model=list[FeedbackResponse],
     tags=["Admin Feedback"],
     summary="View all submitted student feedback",
-    description=(
-        "Administrator-only endpoint. Returns submitted feedback, "
-        "ratings, complaint details, submission timestamps, and student names."
-    ),
-    responses={
-        200: {"description": "Feedback list returned successfully."},
-        401: {"description": "Authentication required."},
-        403: {"description": "Administrator access required."},
-    },
 )
 def get_all_feedback(
     current_user: User = Depends(require_admin),
@@ -1493,15 +1430,6 @@ def get_all_feedback(
     response_model=FeedbackAnalytics,
     tags=["Admin Analytics"],
     summary="Get student feedback analytics",
-    description=(
-        "Administrator-only endpoint. Returns the number of feedback "
-        "submissions, average rating, and distribution of ratings from 1 to 5."
-    ),
-    responses={
-        200: {"description": "Feedback analytics returned successfully."},
-        401: {"description": "Authentication required."},
-        403: {"description": "Administrator access required."},
-    },
 )
 def get_feedback_analytics(
     current_user: User = Depends(require_admin),

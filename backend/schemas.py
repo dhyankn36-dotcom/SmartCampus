@@ -234,3 +234,20 @@ class FeedbackAnalytics(BaseModel):
     total_feedback: int
     average_rating: float
     rating_distribution: dict[int, int]
+
+
+# --------------------------------------------------
+# ADMIN AUDIT LOG SCHEMAS
+# --------------------------------------------------
+
+class AuditLogResponse(BaseModel):
+    """A recorded administrative action."""
+
+    id: int
+    actor_user_id: int | None = None
+    actor_name: str
+    complaint_id: int | None = None
+    action: str
+    old_value: str | None = None
+    new_value: str | None = None
+    created_at: datetime
