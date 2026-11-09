@@ -104,6 +104,22 @@ def test_valid_feedback():
     assert feedback.rating == 5
 
 
+def test_feedback_text_is_trimmed():
+    feedback = FeedbackCreate(
+        feedback="  Issue resolved successfully.  ",
+        rating=5,
+    )
+    assert feedback.feedback == "Issue resolved successfully."
+
+
+def test_whitespace_only_feedback_rejected():
+    with pytest.raises(ValidationError):
+        FeedbackCreate(
+            feedback="   ",
+            rating=5,
+        )
+
+
 @pytest.mark.parametrize("rating", [0, 6, -1])
 def test_invalid_feedback_rating(rating):
     with pytest.raises(ValidationError):

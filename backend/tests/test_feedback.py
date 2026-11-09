@@ -133,6 +133,23 @@ def test_empty_feedback_rejected(client):
     assert response.status_code == 422
 
 
+def test_whitespace_only_feedback_rejected(client):
+    register_user(client, "student@example.com")
+    token = login_user(client, "student@example.com")
+
+    complaint_id = create_complaint(client, token)
+
+    register_user(client, "admin@example.com")
+    promote_to_admin("admin@example.com")
+    admin_token = login_user(client, "admin@example.com")
+
+    resolve_complaint(client, complaint_id, admin_token)
+
+    response = submit_feedback(client, complaint_id, token, "   ")
+
+    assert response.status_code == 422
+
+
 def test_feedback_rejected_for_another_students_complaint(client):
     register_user(client, "first@example.com")
     first_token = login_user(client, "first@example.com")

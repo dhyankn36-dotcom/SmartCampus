@@ -1593,15 +1593,7 @@ def submit_feedback(
             detail="Feedback has already been submitted.",
         )
 
-    feedback_text = feedback_data.feedback.strip()
-
-    if not feedback_text:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Feedback cannot be empty.",
-        )
-
-    complaint.feedback = feedback_text
+    complaint.feedback = feedback_data.feedback
     complaint.feedback_rating = feedback_data.rating
     complaint.feedback_submitted_at = datetime.now(timezone.utc)
 

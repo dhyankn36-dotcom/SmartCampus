@@ -233,6 +233,14 @@ class FeedbackCreate(BaseModel):
         examples=[5],
     )
 
+    @field_validator("feedback")
+    @classmethod
+    def normalize_feedback(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Feedback must not be blank.")
+        return normalized
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [{
