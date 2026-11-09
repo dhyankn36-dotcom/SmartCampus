@@ -890,11 +890,17 @@ def list_complaints(
         )
 
     if search:
-        search_term = f"%{search.strip()}%"
+        search_value = (
+            search.strip()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        search_term = f"%{search_value}%"
         query = query.filter(
-            (Complaint.ticket_id.ilike(search_term))
-            | (Complaint.title.ilike(search_term))
-            | (Complaint.description.ilike(search_term))
+            (Complaint.ticket_id.ilike(search_term, escape="\\"))
+            | (Complaint.title.ilike(search_term, escape="\\"))
+            | (Complaint.description.ilike(search_term, escape="\\"))
         )
 
     if status_filter:

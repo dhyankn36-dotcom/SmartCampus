@@ -1,4 +1,6 @@
 
+import pytest
+
 from database import SessionLocal
 from models import User
 
@@ -116,6 +118,46 @@ def test_search_complaints_by_ticket_id(client):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["ticket_id"] == complaint["ticket_id"]
+
+
+@pytest.mark.parametrize(
+    ("search_term", "matching_title", "other_title"),
+    [
+        ("%", "Broken 10% cable", "Broken 10 cable"),
+        ("_", "Broken_room fan", "Broken room fan"),
+    ],
+)
+def test_search_treats_sql_wildcards_as_literal_characters(
+    client, search_term, matching_title, other_title
+):
+    register_user(client, f"literal_search_{ord(search_term)}@example.com")
+    token = login_user(
+        client, f"literal_search_{ord(search_term)}@example.com"
+    )
+
+    create_complaint(
+        client,
+        token,
+        matching_title,
+        "A complaint containing a literal special character.",
+        "Infrastructure",
+    )
+    create_complaint(
+        client,
+        token,
+        other_title,
+        "An otherwise similar complaint.",
+        "Infrastructure",
+    )
+
+    response = client.get(
+        "/api/complaints",
+        params={"search": search_term},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert [item["title"] for item in response.json()] == [matching_title]
 
 
 def test_filter_complaints_by_category(client):
