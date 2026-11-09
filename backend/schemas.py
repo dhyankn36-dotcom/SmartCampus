@@ -142,6 +142,14 @@ class ComplaintCreate(BaseModel):
         examples=["Infrastructure"],
     )
 
+    @field_validator("title", "description")
+    @classmethod
+    def normalize_complaint_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Complaint text must not be blank.")
+        return normalized
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [{

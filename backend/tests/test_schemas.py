@@ -72,6 +72,30 @@ def test_empty_complaint_title_rejected():
         )
 
 
+@pytest.mark.parametrize("field", ["title", "description"])
+def test_whitespace_only_complaint_text_rejected(field):
+    complaint_data = {
+        "title": "WiFi not working",
+        "description": "Internet connection is unavailable.",
+        "category": "Wi-Fi",
+        field: "   ",
+    }
+
+    with pytest.raises(ValidationError):
+        ComplaintCreate(**complaint_data)
+
+
+def test_complaint_text_is_trimmed():
+    complaint = ComplaintCreate(
+        title="  WiFi not working  ",
+        description="  Internet connection is unavailable.  ",
+        category="Wi-Fi",
+    )
+
+    assert complaint.title == "WiFi not working"
+    assert complaint.description == "Internet connection is unavailable."
+
+
 def test_valid_feedback():
     feedback = FeedbackCreate(
         feedback="Issue resolved successfully.",

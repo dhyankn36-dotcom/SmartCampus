@@ -110,6 +110,25 @@ def test_complaint_requires_login(client):
     assert response.status_code == 401
 
 
+def test_complaint_creation_rejects_whitespace_only_text(client):
+    register_user(client)
+    token = login_user(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    complaint_data = {
+        "title": "WiFi issue",
+        "description": "Campus WiFi is unavailable.",
+        "category": "Wi-Fi",
+    }
+
+    for field in ("title", "description"):
+        response = client.post(
+            "/api/complaints",
+            headers=headers,
+            json={**complaint_data, field: "   "},
+        )
+        assert response.status_code == 422
+
+
 def test_complaint_creation(client):
     register_user(client)
     token = login_user(client)
