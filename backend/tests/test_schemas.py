@@ -18,6 +18,24 @@ def test_valid_user_registration():
     assert user.name == "Test Student"
 
 
+def test_user_registration_trims_name():
+    user = UserRegister(
+        name="  Test Student  ",
+        email="student@example.com",
+        password="sample-password",
+    )
+    assert user.name == "Test Student"
+
+
+def test_whitespace_only_user_name_rejected():
+    with pytest.raises(ValidationError):
+        UserRegister(
+            name="   ",
+            email="student@example.com",
+            password="sample-password",
+        )
+
+
 def test_invalid_user_email():
     with pytest.raises(ValidationError):
         UserRegister(

@@ -36,6 +36,19 @@ def test_user_registration(client):
     assert response.json()["role"] == "student"
 
 
+def test_registration_rejects_whitespace_only_name(client):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "name": "   ",
+            "email": "blank-name@example.com",
+            "password": "password123",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_duplicate_registration(client):
     register_user(client)
 

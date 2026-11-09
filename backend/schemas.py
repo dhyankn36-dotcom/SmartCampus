@@ -1,7 +1,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 # --------------------------------------------------
@@ -27,6 +27,14 @@ class UserRegister(BaseModel):
         description="Account password. Must contain 6 to 128 characters.",
         examples=["SecurePass123"],
     )
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Name must not be blank.")
+        return normalized
 
     model_config = ConfigDict(
         json_schema_extra={
