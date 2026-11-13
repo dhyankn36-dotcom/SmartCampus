@@ -97,3 +97,29 @@ def test_admin_feedback_filter_rejects_out_of_range_rating(client):
     )
 
     assert response.status_code == 422
+
+
+def test_admin_feedback_supports_pagination_and_rejects_invalid_page_size(client):
+    register_user(client, "feedback_pagination_admin@example.com")
+    promote_to_admin("feedback_pagination_admin@example.com")
+    admin_token = login_user(client, "feedback_pagination_admin@example.com")
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    first_page = client.get(
+        "/api/admin/feedback?page=1&page_size=1",
+        headers=headers,
+    )
+    second_page = client.get(
+        "/api/admin/feedback?page=2&page_size=1",
+        headers=headers,
+    )
+    invalid_page_size = client.get(
+        "/api/admin/feedback?page_size=101",
+        headers=headers,
+    )
+
+    assert first_page.status_code == 200
+    assert first_page.json() == []
+    assert second_page.status_code == 200
+    assert second_page.json() == []
+    assert invalid_page_size.status_code == 422
