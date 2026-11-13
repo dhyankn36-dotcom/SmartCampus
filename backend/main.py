@@ -1644,19 +1644,41 @@ def submit_feedback(
     summary="View all submitted student feedback",
 )
 def get_all_feedback(
+    rating: int | None = Query(
+        default=None,
+        ge=1,
+        le=5,
+        description="Optionally filter feedback by its 1–5 star rating.",
+    ),
+    search: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Search feedback text or complaint title.",
+    ),
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    complaints = (
-        db.query(Complaint)
-        .filter(
-            Complaint.feedback.isnot(None),
-            Complaint.feedback_rating.isnot(None),
-            Complaint.feedback_submitted_at.isnot(None),
-        )
-        .order_by(Complaint.feedback_submitted_at.desc())
-        .all()
+    query = db.query(Complaint).filter(
+        Complaint.feedback.isnot(None),
+        Complaint.feedback_rating.isnot(None),
+        Complaint.feedback_submitted_at.isnot(None),
     )
+
+    if rating is not None:
+        query = query.filter(Complaint.feedback_rating == rating)
+
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.filter(
+            (Complaint.feedback.ilike(search_term))
+            | (Complaint.title.ilike(search_term))
+        )
+
+    complaints = query.order_by(
+        Complaint.feedback_submitted_at.desc(),
+        Complaint.id.desc(),
+    ).all()
 
     return [
         {
