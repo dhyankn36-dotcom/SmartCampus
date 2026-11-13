@@ -124,6 +124,8 @@ function App() {
   const [adminFeedbackError, setAdminFeedbackError] = useState("");
   const [feedbackSearch, setFeedbackSearch] = useState("");
   const [feedbackRatingFilter, setFeedbackRatingFilter] = useState("all");
+  const [appliedFeedbackSearch, setAppliedFeedbackSearch] = useState("");
+  const [appliedFeedbackRating, setAppliedFeedbackRating] = useState("all");
 
   // Complaint activity timeline state
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
@@ -246,11 +248,11 @@ function App() {
 
     try {
       const feedbackParams = new URLSearchParams();
-      if (feedbackSearch.trim()) {
-        feedbackParams.set("search", feedbackSearch.trim());
+      if (appliedFeedbackSearch.trim()) {
+        feedbackParams.set("search", appliedFeedbackSearch.trim());
       }
-      if (feedbackRatingFilter !== "all") {
-        feedbackParams.set("rating", feedbackRatingFilter);
+      if (appliedFeedbackRating !== "all") {
+        feedbackParams.set("rating", appliedFeedbackRating);
       }
       const feedbackQuery = feedbackParams.toString();
       const feedbackUrl = `${API_URL}/api/admin/feedback${feedbackQuery ? `?${feedbackQuery}` : ""}`;
@@ -278,7 +280,7 @@ function App() {
     } finally {
       setAdminFeedbackLoading(false);
     }
-  }, [token, isAdmin, feedbackSearch, feedbackRatingFilter]);
+  }, [token, isAdmin, appliedFeedbackSearch, appliedFeedbackRating]);
 
   useEffect(() => {
     if (!token) {
@@ -1703,9 +1705,6 @@ function App() {
                       type="search"
                       value={feedbackSearch}
                       onChange={(event) => setFeedbackSearch(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") loadAdminFeedback();
-                      }}
                       placeholder="Search title or comment"
                       maxLength={100}
                     />
@@ -1730,9 +1729,22 @@ function App() {
                     onClick={() => {
                       setFeedbackSearch("");
                       setFeedbackRatingFilter("all");
+                      setAppliedFeedbackSearch("");
+                      setAppliedFeedbackRating("all");
                     }}
                   >
                     Clear filters
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => {
+                      setAppliedFeedbackSearch(feedbackSearch);
+                      setAppliedFeedbackRating(feedbackRatingFilter);
+                    }}
+                    disabled={adminFeedbackLoading}
+                  >
+                    Apply filters
                   </button>
                 </div>
 
