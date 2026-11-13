@@ -1,5 +1,7 @@
 # SmartCampus — Campus Complaint Management System
 
+![SmartCampus CI](https://github.com/dhyankn36-dotcom/SmartCampus/actions/workflows/ci.yml/badge.svg)
+
 A full-stack campus grievance platform that helps students report issues, track complaint progress, and submit feedback while administrators manage resolution workflows.
 
 SmartCampus is built with **React, FastAPI, and MySQL**, with JWT authentication, role-based access, complaint status history, administrative audit logs, and optional Cloudinary image storage.
