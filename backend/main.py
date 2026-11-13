@@ -1656,6 +1656,8 @@ def get_all_feedback(
         max_length=100,
         description="Search feedback text or complaint title.",
     ),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1675,10 +1677,15 @@ def get_all_feedback(
             | (Complaint.title.ilike(search_term))
         )
 
-    complaints = query.order_by(
-        Complaint.feedback_submitted_at.desc(),
-        Complaint.id.desc(),
-    ).all()
+    complaints = (
+        query.order_by(
+            Complaint.feedback_submitted_at.desc(),
+            Complaint.id.desc(),
+        )
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
 
     return [
         {
