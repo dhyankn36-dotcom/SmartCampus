@@ -122,6 +122,8 @@ function App() {
   const [feedbackAnalytics, setFeedbackAnalytics] = useState(null);
   const [adminFeedbackLoading, setAdminFeedbackLoading] = useState(false);
   const [adminFeedbackError, setAdminFeedbackError] = useState("");
+  const [feedbackSearch, setFeedbackSearch] = useState("");
+  const [feedbackRatingFilter, setFeedbackRatingFilter] = useState("all");
 
   // Complaint activity timeline state
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
@@ -243,8 +245,18 @@ function App() {
     setAdminFeedbackError("");
 
     try {
+      const feedbackParams = new URLSearchParams();
+      if (feedbackSearch.trim()) {
+        feedbackParams.set("search", feedbackSearch.trim());
+      }
+      if (feedbackRatingFilter !== "all") {
+        feedbackParams.set("rating", feedbackRatingFilter);
+      }
+      const feedbackQuery = feedbackParams.toString();
+      const feedbackUrl = `${API_URL}/api/admin/feedback${feedbackQuery ? `?${feedbackQuery}` : ""}`;
+
       const [feedbackResponse, analyticsResponse] = await Promise.all([
-        fetch(`${API_URL}/api/admin/feedback`, {
+        fetch(feedbackUrl, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`${API_URL}/api/admin/feedback/analytics`, {
@@ -266,7 +278,7 @@ function App() {
     } finally {
       setAdminFeedbackLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, feedbackSearch, feedbackRatingFilter]);
 
   useEffect(() => {
     if (!token) {
@@ -1681,6 +1693,46 @@ function App() {
                     disabled={adminFeedbackLoading}
                   >
                     {adminFeedbackLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+
+                <div className="feedback-filter-row">
+                  <label>
+                    Search feedback
+                    <input
+                      type="search"
+                      value={feedbackSearch}
+                      onChange={(event) => setFeedbackSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") loadAdminFeedback();
+                      }}
+                      placeholder="Search title or comment"
+                      maxLength={100}
+                    />
+                  </label>
+                  <label>
+                    Rating
+                    <select
+                      value={feedbackRatingFilter}
+                      onChange={(event) => setFeedbackRatingFilter(event.target.value)}
+                    >
+                      <option value="all">All ratings</option>
+                      <option value="5">5 stars</option>
+                      <option value="4">4 stars</option>
+                      <option value="3">3 stars</option>
+                      <option value="2">2 stars</option>
+                      <option value="1">1 star</option>
+                    </select>
+                  </label>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setFeedbackSearch("");
+                      setFeedbackRatingFilter("all");
+                    }}
+                  >
+                    Clear filters
                   </button>
                 </div>
 
