@@ -102,6 +102,14 @@ class UserRoleUpdate(BaseModel):
         examples=["admin"],
     )
 
+    @field_validator("role")
+    @classmethod
+    def normalize_role(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"student", "admin"}:
+            raise ValueError("Role must be either student or admin.")
+        return normalized
+
 
 class TokenResponse(BaseModel):
     """Authentication response containing a bearer access token."""
