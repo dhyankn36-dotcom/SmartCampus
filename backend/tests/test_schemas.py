@@ -95,6 +95,26 @@ def test_complaint_text_is_trimmed():
     assert complaint.title == "WiFi not working"
     assert complaint.description == "Internet connection is unavailable."
 
+def test_complaint_description_rejects_more_than_5000_characters():
+    with pytest.raises(ValidationError):
+        ComplaintCreate(
+            title="WiFi not working",
+            description="x" * 5001,
+            category="Wi-Fi",
+        )
+
+
+def test_complaint_description_accepts_5000_characters():
+    complaint = ComplaintCreate(
+        title="WiFi not working",
+        description="x" * 5000,
+        category="Wi-Fi",
+    )
+
+    assert len(complaint.description) == 5000
+
+
+
 
 def test_valid_feedback():
     feedback = FeedbackCreate(
