@@ -131,7 +131,8 @@ class ComplaintCreate(BaseModel):
     )
     description: str = Field(
         min_length=1,
-        description="Detailed explanation of the campus issue.",
+        max_length=5000,
+        description="Detailed explanation of the campus issue. Maximum 5000 characters.",
         examples=["The ceiling fan in classroom 204 is not working."],
     )
     category: str = Field(
