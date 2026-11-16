@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose an improvement to campus issue reporting
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature area
+      options:
+        - Student experience
+        - Administrator workflow
+        - Complaint tracking
+        - Department routing
+        - Notifications
+        - Feedback and analytics
+        - Accessibility
+        - Security and privacy
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: User need
+      description: Who needs this feature and what problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that would show the feature is complete.
+    validations:
+      required: false
