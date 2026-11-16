@@ -170,3 +170,23 @@ def test_user_role_update_rejects_unsupported_roles(role):
 
     with pytest.raises(ValidationError):
         UserRoleUpdate(role=role)
+
+
+@pytest.mark.parametrize("category", ["Infrastructure", "Wi-Fi", "Cleanliness", "Transport"])
+def test_complaint_accepts_supported_category(category):
+    complaint = ComplaintCreate(
+        title="Campus issue",
+        description="Please investigate this issue.",
+        category=category,
+    )
+    assert complaint.category == category
+
+
+@pytest.mark.parametrize("category", ["", "Unknown", "wifi", "Maintenance"])
+def test_complaint_rejects_unsupported_category(category):
+    with pytest.raises(ValidationError):
+        ComplaintCreate(
+            title="Campus issue",
+            description="Please investigate this issue.",
+            category=category,
+        )
