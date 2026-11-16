@@ -159,6 +159,16 @@ class ComplaintCreate(BaseModel):
             raise ValueError("Complaint text must not be blank.")
         return normalized
 
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in {"Infrastructure", "Wi-Fi", "Cleanliness", "Transport"}:
+            raise ValueError(
+                "Category must be Infrastructure, Wi-Fi, Cleanliness, or Transport."
+            )
+        return normalized
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [{
