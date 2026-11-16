@@ -155,3 +155,18 @@ def test_empty_feedback_rejected():
             feedback="",
             rating=4,
         )
+
+
+def test_user_role_update_normalizes_valid_roles():
+    from schemas import UserRoleUpdate
+
+    assert UserRoleUpdate(role="  ADMIN ").role == "admin"
+    assert UserRoleUpdate(role=" Student ").role == "student"
+
+
+@pytest.mark.parametrize("role", ["", "   ", "manager", "superadmin"])
+def test_user_role_update_rejects_unsupported_roles(role):
+    from schemas import UserRoleUpdate
+
+    with pytest.raises(ValidationError):
+        UserRoleUpdate(role=role)
